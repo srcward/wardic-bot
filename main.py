@@ -1,7 +1,9 @@
-import discord, os, logging, asyncpg, asyncio, json, random
+import discord, os, logging, asyncpg, asyncio, json, random, ssl
 from discord.ext import commands
+from datetime import timedelta
 from dotenv import load_dotenv
-from aiocache import Cache
+from urllib.parse import urlparse
+from utils.cache import Cache
 
 logging.basicConfig(
     level=logging.INFO,
@@ -18,11 +20,6 @@ load_dotenv()
 _token = os.getenv("DISCORD_TOKEN")
 _database_url = os.getenv("DATABASE_URL")
 _fallback_prefix = os.getenv("FALLBACK_PREFIX")
-_statuses = [
-    "it's the most wonderful time of the year",
-    "i listen to fakemink and esdeekid",
-    "get high with me",
-]
 
 logging.getLogger("discord").setLevel(logging.WARNING)
 
@@ -33,9 +30,43 @@ class Database:
         self.listener_conn = None
 
     async def connect(self):
+        if not _database_url:
+            db_log.error(
+                "DATABASE_URL is not set. Please set the DATABASE_URL environment variable."
+            )
+            raise ValueError("DATABASE_URL environment variable is not set.")
+
+        parsed = urlparse(_database_url)
+        host = parsed.hostname
+        if not host:
+            db_log.error(
+                "DATABASE_URL does not contain a valid host. Please verify the DSN."
+            )
+            raise ValueError("DATABASE_URL is missing a hostname or is malformed.")
+
+        use_ssl = True
+        if host in ("localhost", "127.0.0.1", "::1"):
+            use_ssl = False
+
+        ssl_ctx = None
+        if use_ssl:
+            try:
+                ssl_ctx = ssl.create_default_context()
+                ssl_ctx.check_hostname = True
+                ssl_ctx.verify_mode = ssl.CERT_REQUIRED
+            except Exception as e:
+                db_log.warning(
+                    f"Failed to create SSL context for DB connection: {e}. Proceeding without explicit SSL context."
+                )
+                ssl_ctx = None
+
         try:
+            db_log.info("Creating database connection pool...")
             self.pool = await asyncpg.create_pool(
-                _database_url, min_size=5, max_size=10
+                _database_url,
+                min_size=5,
+                max_size=10,
+                ssl=ssl_ctx if ssl_ctx is not None else None,
             )
             db_log.info("Database connection pool created")
         except Exception as e:
@@ -44,10 +75,16 @@ class Database:
 
     async def close(self):
         if self.listener_conn:
-            await self.listener_conn.close()
+            try:
+                await self.listener_conn.close()
+            except Exception:
+                pass
         if self.pool:
-            await self.pool.close()
-            db_log.info("Database connection pool closed")
+            try:
+                await self.pool.close()
+                db_log.info("Database connection pool closed")
+            except Exception:
+                pass
 
     async def _execute_bot(self, conn, query, *args):
         await conn.execute("SET LOCAL bot.is_updating = 'true';")
@@ -73,23 +110,92 @@ class Database:
             return await conn.fetchval(query, *args)
 
     async def start_listener(self, callback):
-        self.listener_conn = await asyncpg.connect(_database_url)
-        await self.listener_conn.add_listener("cache_invalidate", callback)
-        db_log.info("Started listening for cache invalidation events")
+        if not _database_url:
+            db_log.error("DATABASE_URL is not set. Cannot start listener.")
+            raise ValueError("DATABASE_URL environment variable is not set.")
+
+        parsed = urlparse(_database_url)
+        host = parsed.hostname
+        if not host:
+            db_log.error(
+                "DATABASE_URL does not contain a valid host. Cannot start listener."
+            )
+            raise ValueError("DATABASE_URL is missing a hostname or is malformed.")
+
+        use_ssl = True
+        if host in ("localhost", "127.0.0.1", "::1"):
+            use_ssl = False
+
+        ssl_ctx = None
+        if use_ssl:
+            try:
+                ssl_ctx = ssl.create_default_context()
+                ssl_ctx.check_hostname = True
+                ssl_ctx.verify_mode = ssl.CERT_REQUIRED
+            except Exception as e:
+                db_log.warning(
+                    f"Failed to create SSL context for listener: {e}. Trying without explicit SSL context."
+                )
+                ssl_ctx = None
+
+        try:
+            self.listener_conn = await asyncpg.connect(
+                _database_url, ssl=ssl_ctx if ssl_ctx is not None else None
+            )
+            await self.listener_conn.add_listener("cache_invalidate", callback)
+            db_log.info("Started listening for cache invalidation events")
+        except Exception as e:
+            db_log.error(f"Failed to start listener connection: {e}")
+            if self.listener_conn:
+                try:
+                    await self.listener_conn.close()
+                except Exception:
+                    pass
+                self.listener_conn = None
+            raise
 
 
 class BotCache:
     def __init__(self):
-        self.guilds = Cache(Cache.MEMORY, namespace="guilds", ttl=300)
-        self.members = Cache(Cache.MEMORY, namespace="members", ttl=300)
-        self.users = Cache(Cache.MEMORY, namespace="users", ttl=300)
-        self.config = Cache(Cache.MEMORY, namespace="config", ttl=60)
+        self.guilds = Cache(
+            Cache.MEMORY,
+            namespace="guilds",
+            ttl=int(timedelta(minutes=10).total_seconds()),
+        )
+        self.members = Cache(
+            Cache.MEMORY,
+            namespace="members",
+            ttl=int(timedelta(minutes=10).total_seconds()),
+        )
+        self.users = Cache(
+            Cache.MEMORY,
+            namespace="users",
+            ttl=int(timedelta(minutes=10).total_seconds()),
+        )
+        self.config = Cache(
+            Cache.MEMORY,
+            namespace="config",
+            ttl=int(timedelta(minutes=5).total_seconds()),
+        )
+        self.snipes = Cache(
+            Cache.MEMORY,
+            namespace="snipes",
+            ttl=int(timedelta(hours=2).total_seconds()),
+        )
 
     async def clear_all(self):
         await self.guilds.clear()
         await self.members.clear()
         await self.users.clear()
         await self.config.clear()
+
+    async def cleanup_all_expired(self) -> int:
+        total = 0
+        total += await self.guilds.cleanup_expired()
+        total += await self.members.cleanup_expired()
+        total += await self.users.cleanup_expired()
+        total += await self.config.cleanup_expired()
+        return total
 
 
 class DatabaseFunctions:
@@ -155,7 +261,7 @@ class DatabaseFunctions:
                 ELSIF TG_TABLE_NAME = 'configuration' THEN
                     PERFORM pg_notify('cache_invalidate', json_build_object(
                         'table', 'configuration',
-                        'id', TRUE
+                        'id', 'config'
                     )::text);
                 END IF;
 
@@ -221,7 +327,7 @@ class DatabaseFunctions:
                 json.dumps(data),
                 bot_update=True,
             )
-        await self.cache.guilds.set(guild_id, data)
+        await self.cache.guilds.set(str(guild_id), data)
         return data
 
     async def set_guild_data(self, guild_id: int, data: dict):
@@ -231,7 +337,7 @@ class DatabaseFunctions:
             json.dumps(data),
             bot_update=True,
         )
-        await self.cache.guilds.set(guild_id, data)
+        await self.cache.guilds.set(str(guild_id), data)
 
     # Member
     async def get_member_data(self, guild_id: int, member_id: int) -> dict:
@@ -264,6 +370,7 @@ class DatabaseFunctions:
         return data
 
     async def set_member_data(self, guild_id: int, member_id: int, data: dict):
+        cache_key = f"{guild_id}:{member_id}"
         await self.db.execute(
             "INSERT INTO members (guild_id, member_id, data) VALUES ($1, $2, $3) ON CONFLICT (guild_id, member_id) DO UPDATE SET data=$3",
             guild_id,
@@ -271,7 +378,7 @@ class DatabaseFunctions:
             json.dumps(data),
             bot_update=True,
         )
-        await self.cache.members.set(f"{guild_id}:{member_id}", data)
+        await self.cache.members.set(cache_key, data)
 
     # User
     async def get_user_data(self, user_id: int) -> dict:
@@ -294,7 +401,7 @@ class DatabaseFunctions:
                 json.dumps(data),
                 bot_update=True,
             )
-        await self.cache.users.set(user_id, data)
+        await self.cache.users.set(str(user_id), data)
         return data
 
     async def set_user_data(self, user_id: int, data: dict):
@@ -304,7 +411,7 @@ class DatabaseFunctions:
             json.dumps(data),
             bot_update=True,
         )
-        await self.cache.users.set(user_id, data)
+        await self.cache.users.set(str(user_id), data)
 
     # Configuration
     async def get_configuration(self) -> dict:
@@ -342,7 +449,7 @@ class DatabaseFunctions:
         await self.db.execute(
             "DELETE FROM guilds WHERE id=$1", guild_id, bot_update=True
         )
-        await self.cache.guilds.delete(guild_id)
+        await self.cache.guilds.delete(str(guild_id))
 
     async def delete_member_data(self, guild_id: int, member_id: int):
         await self.db.execute(
@@ -358,9 +465,12 @@ class DatabaseFunctions:
             "DELETE FROM members WHERE member_id=$1", member_id, bot_update=True
         )
 
+        member_str = f":{member_id}"
+        await self.cache.members.delete_pattern(member_str)
+
     async def delete_user_data(self, user_id: int):
         await self.db.execute("DELETE FROM users WHERE id=$1", user_id, bot_update=True)
-        await self.cache.users.delete(user_id)
+        await self.cache.users.delete(str(user_id))
 
     async def clear_cache(self):
         await self.cache.clear_all()
@@ -381,13 +491,13 @@ class Bot(commands.Bot):
             help_command=None,
             case_insensitive=True,
             owner_ids=[988623277326991440],
-            activity=discord.CustomActivity(name=random.choice(_statuses)),
         )
 
         self.db = Database()
         self.cache = BotCache()
         self.dbf = DatabaseFunctions(self.db, self.cache)
         self._fallback_prefix = _fallback_prefix
+        self.bp = "•"
 
         self.add_check(self.guild_whitelist_check)
 
@@ -486,6 +596,28 @@ class Bot(commands.Bot):
 
     async def on_ready(self):
         log.info(f"Logged in as {self.user.name}")
+
+        config: dict = await self.dbf.get_configuration()
+        status_data: dict = config.get("Statuses", {})
+
+        statuses: list = status_data.get("List", ["i listen to esdeekid and fakemink"])
+        settings: dict = status_data.get("Configuration", {})
+
+        randomized: bool = settings.get("Randomized", False)
+        loop_enabled: bool = settings.get("LoopingEnabled", True)
+        current_status: str = status_data.get("Status")
+
+        if not loop_enabled and current_status:
+            status_text = current_status
+        elif statuses:
+            status_text = random.choice(statuses) if randomized else statuses[0]
+        else:
+            status_text = None
+
+        if status_text:
+            await self.change_presence(
+                activity=discord.CustomActivity(name=status_text)
+            )
 
 
 async def main():

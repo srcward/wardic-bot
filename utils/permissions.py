@@ -1,5 +1,7 @@
 import discord
 from discord.ext import commands
+from typing import Mapping, Dict, Any, Union
+
 from utils import exceptions, helpers
 from utils.messages import Embeds
 
@@ -85,6 +87,59 @@ async def higher_permissions(
         )
 
 
+async def higher_role_permissions(
+    actor: discord.Member,
+    target_role: discord.Role,
+    action: str = "do that to",
+    can_affect_bot_role: bool = False,
+    can_affect_everyone_role: bool = False,
+):
+    guild = actor.guild
+    bot_member = guild.me
+
+    if target_role.is_default() and not can_affect_everyone_role:
+        raise exceptions.HierarchyCheckError(
+            Embeds.warning(
+                author=actor,
+                description=f"You **can't {action}** the `@everyone` role.",
+            )
+        )
+
+    if bot_member.top_role.position <= target_role.position and not can_affect_bot_role:
+        if bot_member.top_role.position < target_role.position:
+            raise exceptions.HierarchyCheckError(
+                Embeds.warning(
+                    author=actor,
+                    description=f"I **can't {action}** a role that is **higher than me**.",
+                )
+            )
+        else:
+            raise exceptions.HierarchyCheckError(
+                Embeds.warning(
+                    author=actor,
+                    description=f"I **can't {action}** a role that is **equal to my highest role**.",
+                )
+            )
+
+    if actor.top_role.position < target_role.position:
+        raise exceptions.HierarchyCheckError(
+            Embeds.warning(
+                author=actor,
+                description=f"You **can't {action}** a role that is **higher than you**.",
+            )
+        )
+
+    if actor.top_role.position == target_role.position:
+        raise exceptions.HierarchyCheckError(
+            Embeds.warning(
+                author=actor,
+                description=f"You **can't {action}** a role that is **equal to your highest role**.",
+            )
+        )
+
+    return True
+
+
 async def is_antinuke_administrator(
     bot: commands.Bot, guild: discord.Guild, user: discord.User
 ):
@@ -108,4 +163,16 @@ async def is_antiraid_administrator(
 
     if user.id in antiraid_administrators or user.id == owner_id:
         return True
+
     return False
+
+async def merge_overwrites(self, channel: discord.TextChannel) -> dict:
+    overwrites = {}
+        
+    for target, overwrite in channel.overwrites.items():
+        new_overwrite = discord.PermissionOverwrite(**overwrite._values)
+        new_overwrite.send_messages = False
+            
+        overwrites[target] = new_overwrite
+
+    return overwrites

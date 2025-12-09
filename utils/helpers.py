@@ -1,5 +1,7 @@
-import discord, re
+import discord, re, aiohttp, time
 from discord.ext import commands
+from io import BytesIO
+from PIL import Image
 from typing import Optional, Union
 from utils import exceptions
 
@@ -100,6 +102,54 @@ def parse_duration(value, *, default_unit="s", max_time=None) -> int:
             max_seconds = parse_duration(max_time, default_unit=default_unit)
 
         if total > max_seconds:
-            raise exceptions.ParseDuration_MaxDuration(value, max_time)
+            raise exceptions.MaxDurationExceeded(value, max_time)
 
     return total
+
+
+async def image_primary_colour(url: str) -> discord.Colour:
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url) as resp:
+            if resp.status != 200:
+                raise ValueError("Failed to fetch image from URL")
+            data = BytesIO(await resp.read())
+
+        img = Image.open(data).convert("RGB")
+        img = img.resize((50, 50))
+
+        pixels = list(img.getdata())
+        r = sum(p[0] for p in pixels) // len(pixels)
+        g = sum(p[1] for p in pixels) // len(pixels)
+        b = sum(p[2] for p in pixels) // len(pixels)
+
+        return discord.Colour.from_rgb(r, g, b)
+
+
+def build_duration(timestamp: int | float, max_length: int = None) -> str:
+    now = time.time()
+    diff = max(0, int(now - timestamp))
+
+    units = [
+        ("y", 60 * 60 * 24 * 365),
+        ("mo", 60 * 60 * 24 * 30),
+        ("w", 60 * 60 * 24 * 7),
+        ("d", 60 * 60 * 24),
+        ("h", 60 * 60),
+        ("m", 60),
+        ("s", 1),
+    ]
+
+    parts = []
+    for suffix, seconds in units:
+        if diff >= seconds:
+            value = diff // seconds
+            diff -= value * seconds
+            parts.append(f"{value}{suffix}")
+
+    if not parts:
+        return "just now"
+
+    if max_length is not None:
+        parts = parts[:max_length]
+
+    return " ".join(parts)
