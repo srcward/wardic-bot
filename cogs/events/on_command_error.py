@@ -16,13 +16,24 @@ class OnCommandError(commands.Cog):
     @commands.Cog.listener()
     async def on_command_error(self, ctx, error):
         if isinstance(error, commands.CheckFailure):
-            pass
+            return
+        elif isinstance(error, commands.CommandOnCooldown):
+            cooldown = error.retry_after
+            formatted = f"{cooldown:2f}s"
+            await ctx.send(
+                embed=Embeds.embed(
+                    author=ctx.author,
+                    description=f"**{ctx.command.name}** is on cooldown. Try again in **{formatted}**.",
+                    emoji="<:cooldown:1446603946474078299>",
+                    colour=0x53C6EF,
+                )
+            )
         elif isinstance(error, exceptions.HierarchyCheckError):
-            pass
+            return
         elif isinstance(error, exceptions.MaxDurationExceeded):
-            pass
+            return
         elif isinstance(error, commands.CommandNotFound):
-            pass
+            return
         elif isinstance(error, exceptions.NotAntiNukeAdmin):
             await ctx.send(
                 embed=Embeds.warning(
@@ -100,7 +111,6 @@ class OnCommandError(commands.Cog):
             )
         else:
             log.error(error)
-
 
 async def setup(bot):
     await bot.add_cog(OnCommandError(bot))

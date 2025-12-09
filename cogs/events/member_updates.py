@@ -30,6 +30,24 @@ class MemberUpdates(commands.Cog):
         except (discord.Forbidden, discord.HTTPException):
             pass
 
+    @commands.Cog.listener()
+    async def on_member_join(self, member: discord.Member):
+        guild = member.guild
+
+        guild_data = await self.dbf.get_guild_data(guild_id=guild.id)
+        moderation_data = guild_data.setdefault("Moderation", {})
+        hard_banned_users = moderation_data.setdefault("HardBanned_Users", [])
+
+        if member.id in hard_banned_users:
+            try:
+                await guild.ban(
+                    user=member,
+                    reason=f"Re-Applying Hardban",
+                    delete_message_seconds=86400,
+                )
+            except (discord.Forbidden, discord.HTTPException):
+                pass
+
 
 async def setup(bot):
     await bot.add_cog(MemberUpdates(bot))

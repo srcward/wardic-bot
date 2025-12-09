@@ -2,8 +2,9 @@ import discord
 from discord.ext import commands
 
 from typing import Optional, Union
+from datetime import datetime
 
-from utils import views
+from utils import views, helpers
 from utils.messages import Embeds
 
 from main import Bot
@@ -13,6 +14,8 @@ class Server(commands.Cog):
     def __init__(self, bot: Bot):
         self.bot = bot
         self.dbf = bot.dbf
+        self.snipes = bot.cache.snipes
+        self.img_extensions = (".png", ".jpg", ".jpeg", ".gif", ".webp")
 
     @commands.group(
         name="prefix",
@@ -226,6 +229,40 @@ class Server(commands.Cog):
             )
         )
 
+    @alias_group.command(
+        name="view",
+        help="View all aliases in the server",
+    )
+    @commands.has_permissions(administrator=True)
+    async def view_alias_command(self, ctx: commands.Context):
+        guild_data: dict = await self.dbf.get_guild_data(guild_id=ctx.guild.id)
+        guild_config: dict = guild_data.setdefault("Configuration", {})
+        guild_aliases: dict = guild_config.setdefault("Command_Aliases", {})
+
+        if not guild_aliases:
+            return await ctx.send(
+                embed=Embeds.warning(
+                    author=ctx.author,
+                    description=f"There **aren't any aliases** for **{ctx.guild.name}**.",
+                )
+            )
+
+        items = [
+            f"`{index+1}` {alias} → {guild_aliases[alias]}"
+            for index, alias in enumerate(guild_aliases)
+        ]
+
+        paginator = views.Paginator(
+            bot=self.bot,
+            ctx=ctx,
+            items=items,
+            items_per_page=10,
+            embed_title=f"Aliases in {ctx.guild.name}",
+            owner=ctx.author,
+            owner_can_delete=True,
+        )
+        await paginator.start()
+
     @commands.command(name="roles", help="View all of the server roles")
     @commands.guild_only()
     async def roles_command(self, ctx: commands.Context):
@@ -284,6 +321,108 @@ class Server(commands.Cog):
             owner_can_delete=True,
         )
         await paginator.start()
+
+    @commands.Cog.listener()
+    async def on_message_delete(self, message: discord.Message):
+        if message.author.bot or not message.guild:
+            return
+
+        cache_key = f"{message.guild.id}:{message.channel.id}"
+        snipes = await self.snipes.get(cache_key, [])
+
+        attachment_url = None
+
+        if message.attachments:
+            for a in message.attachments:
+                if a.filename.lower().endswith(self.img_extensions):
+                    attachment_url = a.url
+                    break
+
+        data = {
+            "content": message.content or "*[No content]*",
+            "author_id": message.author.id,
+            "timestamp": datetime.now().timestamp(),
+            "attachment_url": attachment_url,
+        }
+
+        snipes.insert(0, data)
+        snipes = snipes[:500]
+
+        await self.snipes.set(cache_key, snipes)
+
+    @commands.command(
+        name="snipe",
+        help="Snipe a deleted message",
+        usage="[index] [member]",
+        aliases=["s"],
+    )
+    @commands.guild_only()
+    async def snipe_command(
+        self,
+        ctx: commands.Context,
+        index: int = 1,
+        member: Optional[discord.Member] = None,
+    ):
+        r_index = max(0, index - 1)
+
+        cache_key = f"{ctx.guild.id}:{ctx.channel.id}"
+        snipes = await self.snipes.get(cache_key, [])
+
+        if member:
+            snipes = [s for s in snipes if s["author_id"] == member.id]
+
+        if not snipes:
+            return await ctx.send(
+                embed=Embeds.embed(
+                    author=ctx.author,
+                    description="There hasn't been any snipes within the last **2 hours**",
+                    emoji=":mag:",
+                )
+            )
+
+        if r_index >= len(snipes):
+            r_index = len(snipes) - 1
+
+        data = snipes[r_index]
+        author = await helpers.promise_user(self.bot, data["author_id"])
+
+        timestamp = float(data["timestamp"])
+        attachment_url = data.get("attachment_url")
+
+        if attachment_url:
+            try:
+                colour = await helpers.image_primary_colour(attachment_url)
+            except:
+                colour = await helpers.image_primary_colour(author.display_avatar.url)
+        else:
+            colour = await helpers.image_primary_colour(author.display_avatar.url)
+
+        embed = discord.Embed(
+            description=data["content"],
+            colour=colour,
+        )
+
+        built_timestamp = helpers.build_duration(timestamp, 2)
+        embed.set_footer(
+            text=f"Deleted {built_timestamp} ago • Snipe {index}/{len(snipes)}"
+        )
+        embed.set_author(name=author.name, icon_url=author.display_avatar.url)
+
+        if attachment_url:
+            embed.set_image(url=attachment_url)
+
+        await ctx.send(embed=embed)
+
+    @commands.command(
+        name="clearsnipes",
+        help="Clear all snipes from the server",
+        aliases=["cs", "clearsnipe"],
+    )
+    @commands.guild_only()
+    @commands.has_permissions(manage_messages=True)
+    async def clear_snipes_command(self, ctx: commands.Context):
+        deleted = await self.snipes.delete_pattern(f"{ctx.guild.id}:")
+        await ctx.message.add_reaction("✅")
 
 
 async def setup(bot):

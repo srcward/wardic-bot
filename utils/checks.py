@@ -28,3 +28,18 @@ def is_antiraid_admin():
         return True
 
     return commands.check(predicate)
+
+
+def is_owner():
+    async def predicate(ctx: commands.Context):
+        config = await ctx.bot.dbf.get_configuration()
+        developers = config.setdefault("Developers", [])
+
+        isowner = ctx.author.id in ctx.bot.owner_ids
+        isdev = ctx.author.id in developers
+
+        if not isowner and not isdev:
+            raise commands.MissingPermissions("bot_owner")
+        return True
+
+    return commands.check(predicate)
