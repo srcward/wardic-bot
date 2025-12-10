@@ -44,29 +44,17 @@ class Database:
             )
             raise ValueError("DATABASE_URL is missing a hostname or is malformed.")
 
-        use_ssl = True
-        if host in ("localhost", "127.0.0.1", "::1"):
-            use_ssl = False
-
-        ssl_ctx = None
-        if use_ssl:
-            try:
-                ssl_ctx = ssl.create_default_context()
-                ssl_ctx.check_hostname = True
-                ssl_ctx.verify_mode = ssl.CERT_REQUIRED
-            except Exception as e:
-                db_log.warning(
-                    f"Failed to create SSL context for DB connection: {e}. Proceeding without explicit SSL context."
-                )
-                ssl_ctx = None
+        use_ssl = host not in ("localhost", "127.0.0.1", "::1")
 
         try:
             db_log.info("Creating database connection pool...")
             self.pool = await asyncpg.create_pool(
                 _database_url,
-                min_size=5,
-                max_size=10,
-                ssl=ssl_ctx if ssl_ctx is not None else None,
+                min_size=2,
+                max_size=5,
+                ssl="require" if use_ssl else None,
+                command_timeout=60,
+                statement_cache_size=0,
             )
             db_log.info("Database connection pool created")
         except Exception as e:
@@ -114,33 +102,20 @@ class Database:
             db_log.error("DATABASE_URL is not set. Cannot start listener.")
             raise ValueError("DATABASE_URL environment variable is not set.")
 
-        parsed = urlparse(_database_url)
+        listener_url = _database_url.replace(":6543/", ":5432/")
+
+        parsed = urlparse(listener_url)
         host = parsed.hostname
-        if not host:
-            db_log.error(
-                "DATABASE_URL does not contain a valid host. Cannot start listener."
-            )
-            raise ValueError("DATABASE_URL is missing a hostname or is malformed.")
-
-        use_ssl = True
-        if host in ("localhost", "127.0.0.1", "::1"):
-            use_ssl = False
-
-        ssl_ctx = None
-        if use_ssl:
-            try:
-                ssl_ctx = ssl.create_default_context()
-                ssl_ctx.check_hostname = True
-                ssl_ctx.verify_mode = ssl.CERT_REQUIRED
-            except Exception as e:
-                db_log.warning(
-                    f"Failed to create SSL context for listener: {e}. Trying without explicit SSL context."
-                )
-                ssl_ctx = None
+        use_ssl = host not in ("localhost", "127.0.0.1", "::1")
 
         try:
+            db_log.info(
+                "Creating direct connection for listener (port 5432, bypassing pooler)..."
+            )
             self.listener_conn = await asyncpg.connect(
-                _database_url, ssl=ssl_ctx if ssl_ctx is not None else None
+                listener_url,
+                ssl="require" if use_ssl else None,
+                statement_cache_size=0,
             )
             await self.listener_conn.add_listener("cache_invalidate", callback)
             db_log.info("Started listening for cache invalidation events")
@@ -180,6 +155,11 @@ class BotCache:
         self.snipes = Cache(
             Cache.MEMORY,
             namespace="snipes",
+            ttl=int(timedelta(hours=2).total_seconds()),
+        )
+        self.roles = Cache(
+            Cache.MEMORY,
+            namespace="roles",
             ttl=int(timedelta(hours=2).total_seconds()),
         )
 
@@ -226,6 +206,11 @@ class DatabaseFunctions:
             active BOOL PRIMARY KEY DEFAULT TRUE,
             data JSONB DEFAULT '{}'
         );
+
+        ALTER TABLE guilds DISABLE ROW LEVEL SECURITY;
+        ALTER TABLE members DISABLE ROW LEVEL SECURITY;
+        ALTER TABLE users DISABLE ROW LEVEL SECURITY;
+        ALTER TABLE configuration DISABLE ROW LEVEL SECURITY;
         """
         await self.db.execute(q, bot_update=True)
 
@@ -522,9 +507,11 @@ class Bot(commands.Bot):
         config = await self.dbf.get_configuration()
         whitelisted_guilds = config.get("Whitelisted_Guilds", [])
 
-        if ctx.guild.id in whitelisted_guilds:
+        if not whitelisted_guilds:
             return True
-        return False
+
+        guild_id = ctx.guild.id
+        return guild_id in whitelisted_guilds or str(guild_id) in whitelisted_guilds
 
     async def get_prefix(self, message: discord.Message):
         if not message.guild:

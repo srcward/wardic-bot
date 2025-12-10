@@ -2,7 +2,8 @@ import discord, re, aiohttp, time
 from discord.ext import commands
 from io import BytesIO
 from PIL import Image
-from typing import Optional, Union
+from typing import Optional, Union, Dict, Any, List
+from collections import Counter
 from utils import exceptions
 
 
@@ -36,6 +37,18 @@ async def promise_guild(bot: commands.Bot, guild_id: int) -> Optional[discord.Gu
         except (discord.Forbidden, discord.HTTPException):
             guild = None
     return guild
+
+
+async def promise_role(
+    bot: commands.Bot, guild: discord.Guild, role_id: int
+) -> Optional[discord.Role]:
+    role = guild.get_role(role_id)
+    if not role:
+        try:
+            role = await guild.fetch_role(role_id)
+        except (discord.Forbidden, discord.HTTPException):
+            role = None
+    return role
 
 
 async def promise_ban_entry(
@@ -107,6 +120,87 @@ def parse_duration(value, *, default_unit="s", max_time=None) -> int:
     return total
 
 
+def parse_flags(
+    args: str, flags: Dict[str, Dict[str, Any]]
+) -> Dict[str, Union[str, int, bool, List[str]]]:
+    if not args:
+        args = ""
+
+    alias_map = {}
+    for flag_name, flag_config in flags.items():
+        alias_map[f"--{flag_name}"] = flag_name
+        if "aliases" in flag_config:
+            for alias in flag_config["aliases"]:
+                if len(alias) == 1:
+                    alias_map[f"-{alias}"] = flag_name
+                else:
+                    alias_map[f"--{alias}"] = flag_name
+
+    result = {}
+    for flag_name, flag_config in flags.items():
+        if "default" in flag_config:
+            result[flag_name] = flag_config["default"]
+        elif flag_config.get("multiple", False):
+            result[flag_name] = []
+        else:
+            result[flag_name] = None
+
+    parts = args.split()
+    i = 0
+
+    while i < len(parts):
+        part = parts[i]
+
+        if part.startswith("-"):
+            if part not in alias_map:
+                i += 1
+                continue
+
+            flag_name = alias_map[part]
+            flag_config = flags[flag_name]
+            flag_type = flag_config["type"]
+
+            if flag_type == bool:
+                result[flag_name] = True
+                i += 1
+                continue
+
+            if i + 1 < len(parts) and not parts[i + 1].startswith("-"):
+                value_str = parts[i + 1]
+
+                try:
+                    if flag_type == int:
+                        value = int(value_str)
+                    elif flag_type == str:
+                        value = value_str
+                    else:
+                        value = value_str
+
+                    # Handle multiple values
+                    if flag_config.get("multiple", False):
+                        result[flag_name].append(value)
+                    else:
+                        result[flag_name] = value
+
+                    i += 2
+                except (ValueError, TypeError):
+                    i += 1
+            else:
+                i += 1
+        else:
+            i += 1
+
+    missing = []
+    for flag_name, flag_config in flags.items():
+        if flag_config.get("required", False) and result.get(flag_name) is None:
+            missing.append(flag_name)
+
+    if missing:
+        raise ValueError(f"Missing required flags: {', '.join(missing)}")
+
+    return result
+
+
 async def image_primary_colour(url: str) -> discord.Colour:
     async with aiohttp.ClientSession() as session:
         async with session.get(url) as resp:
@@ -114,15 +208,30 @@ async def image_primary_colour(url: str) -> discord.Colour:
                 raise ValueError("Failed to fetch image from URL")
             data = BytesIO(await resp.read())
 
-        img = Image.open(data).convert("RGB")
-        img = img.resize((50, 50))
+    img = Image.open(data).convert("RGB")
+    img = img.resize((150, 150))
 
-        pixels = list(img.getdata())
-        r = sum(p[0] for p in pixels) // len(pixels)
-        g = sum(p[1] for p in pixels) // len(pixels)
-        b = sum(p[2] for p in pixels) // len(pixels)
+    pixels = list(img.getdata())
 
-        return discord.Colour.from_rgb(r, g, b)
+    pixel_counts = Counter(pixels)
+    top_colors = pixel_counts.most_common(10)
+
+    def calculate_vibrancy(rgb):
+        r, g, b = rgb
+        max_val = max(r, g, b)
+        min_val = min(r, g, b)
+
+        brightness = sum(rgb) / 3
+        if brightness < 30 or brightness > 230:
+            return 0
+
+        if max_val == 0:
+            return 0
+        return (max_val - min_val) / max_val
+
+    most_vibrant = max(top_colors, key=lambda x: calculate_vibrancy(x[0]))
+
+    return discord.Colour.from_rgb(*most_vibrant[0])
 
 
 def build_duration(timestamp: int | float, max_length: int = None) -> str:

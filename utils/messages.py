@@ -8,7 +8,7 @@ _fallback_prefix = os.getenv("FALLBACK_PREFIX")
 class Colours:
     @staticmethod
     def main():
-        return discord.Colour(0x544B61)
+        return discord.Colour(0x71709D)
 
     @staticmethod
     def green():
@@ -26,7 +26,7 @@ class Colours:
 class Emojis:
     @staticmethod
     def checkmark():
-        return "<:checkmark:1446339877280026736>"
+        return "<:new_approve:1448062471012094063>"
 
     @staticmethod
     def warning():
@@ -34,7 +34,7 @@ class Emojis:
 
     @staticmethod
     def issue():
-        return "<:issue:1444853237512405174>"
+        return "<:new_issue:1447843542419636337>"
 
     @staticmethod
     def loading():
@@ -49,7 +49,7 @@ class Embeds:
     ):
         return discord.Embed(
             description=f"{Emojis.checkmark()} {f"{author.mention}: " if author else ""}{description}",
-            colour=Colours.green(),
+            colour=Colours.main(),
         )
 
     @staticmethod

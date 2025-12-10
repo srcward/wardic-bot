@@ -15,11 +15,23 @@ class OnCommandError(commands.Cog):
 
     @commands.Cog.listener()
     async def on_command_error(self, ctx, error):
-        if isinstance(error, commands.CheckFailure):
+        if isinstance(error, commands.MissingPermissions):
+            permissions = ", ".join(error.missing_permissions)
+            await ctx.send(
+                embed=Embeds.warning(
+                    author=ctx.author,
+                    description=f"You're **missing** permissions: `{permissions}`.",
+                )
+            )
+        elif isinstance(error, exceptions.HierarchyCheckError):
+            return
+        elif isinstance(error, exceptions.MaxDurationExceeded):
+            return
+        elif isinstance(error, commands.CheckFailure):
             return
         elif isinstance(error, commands.CommandOnCooldown):
             cooldown = error.retry_after
-            formatted = f"{cooldown:2f}s"
+            formatted = f"{cooldown:.1f}s"
             await ctx.send(
                 embed=Embeds.embed(
                     author=ctx.author,
@@ -28,10 +40,6 @@ class OnCommandError(commands.Cog):
                     colour=0x53C6EF,
                 )
             )
-        elif isinstance(error, exceptions.HierarchyCheckError):
-            return
-        elif isinstance(error, exceptions.MaxDurationExceeded):
-            return
         elif isinstance(error, commands.CommandNotFound):
             return
         elif isinstance(error, exceptions.NotAntiNukeAdmin):
@@ -39,14 +47,6 @@ class OnCommandError(commands.Cog):
                 embed=Embeds.warning(
                     author=ctx.author,
                     description=f"You need to be an **AntiNuke Administrator** to **{ctx.command.name}**.",
-                )
-            )
-        elif isinstance(error, commands.MissingPermissions):
-            permissions = ", ".join(error.missing_permissions)
-            await ctx.send(
-                embed=Embeds.warning(
-                    author=ctx.author,
-                    description=f"You're **missing** permissions: `{permissions}`.",
                 )
             )
         elif isinstance(error, commands.BotMissingPermissions):
@@ -111,6 +111,7 @@ class OnCommandError(commands.Cog):
             )
         else:
             log.error(error)
+
 
 async def setup(bot):
     await bot.add_cog(OnCommandError(bot))
