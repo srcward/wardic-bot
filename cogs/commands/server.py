@@ -17,6 +17,86 @@ class Server(commands.Cog):
         self.snipes = bot.cache.snipes
         self.img_extensions = (".png", ".jpg", ".jpeg", ".gif", ".webp")
 
+    @staticmethod
+    def parse_keyword_list(text: str) -> list[str]:
+        parts = [p.strip() for p in text.split(",")]
+        return [p for p in parts if p]
+
+    async def get_or_create_automod_rule(self, guild: discord.Guild):
+        rules = await guild.fetch_automod_rules()
+
+        for rule in rules:
+            if rule.name == "Keyword Filter":
+                alert_action = next(
+                    (
+                        a
+                        for a in rule.actions
+                        if a.type == discord.AutoModRuleActionType.send_alert_message
+                    ),
+                    None,
+                )
+
+                if alert_action and alert_action.channel_id is None:
+                    channel = guild.system_channel or next(
+                        (
+                            c
+                            for c in guild.text_channels
+                            if c.permissions_for(guild.me).send_messages
+                        ),
+                        None,
+                    )
+                    if channel:
+                        await rule.edit(
+                            actions=[
+                                discord.AutoModRuleAction(
+                                    type=discord.AutoModRuleActionType.send_alert_message,
+                                    channel_id=channel.id,
+                                ),
+                                discord.AutoModRuleAction(
+                                    type=discord.AutoModRuleActionType.block_message
+                                ),
+                            ],
+                            reason="Auto-fixed missing alert channel",
+                        )
+                return rule
+
+        return None
+
+    async def create_filter_rule(
+        self, guild: discord.Guild, keywords: list[str], author: discord.Member
+    ):
+        channel = guild.system_channel or next(
+            (
+                c
+                for c in guild.text_channels
+                if c.permissions_for(guild.me).send_messages
+            ),
+            None,
+        )
+
+        if channel is None:
+            raise ValueError("No valid channel for AutoMod alert messages.")
+
+        return await guild.create_automod_rule(
+            name="Keyword Filter",
+            enabled=True,
+            event_type=discord.AutoModRuleEventType.message_send,
+            trigger=discord.AutoModTrigger(
+                type=discord.AutoModRuleTriggerType.keyword,
+                keyword_filter=keywords,
+            ),
+            actions=[
+                discord.AutoModRuleAction(
+                    type=discord.AutoModRuleActionType.send_alert_message,
+                    channel_id=channel.id,
+                ),
+                discord.AutoModRuleAction(
+                    type=discord.AutoModRuleActionType.block_message,
+                ),
+            ],
+            reason=f"Created by {author.name}",
+        )
+
     @commands.group(
         name="prefix",
         help="A group of prefix related commands",
@@ -146,7 +226,7 @@ class Server(commands.Cog):
         usage="(subcommand) (arguments) | add ban deport",
         invoke_without_command=True,
     )
-    @commands.has_permissions(administrator=True)
+    @commands.has_permissions(manage_guild=True)
     async def alias_group(self, ctx: commands.Context, command: Optional[str] = None):
         if not ctx.invoked_subcommand:
             await ctx.send(
@@ -160,7 +240,7 @@ class Server(commands.Cog):
         help="Add an alias to a command",
         usage="(command) (alias) | ban deport",
     )
-    @commands.has_permissions(administrator=True)
+    @commands.has_permissions(manage_guild=True)
     async def add_alias_command(self, ctx: commands.Context, command: str, alias: str):
         command = command.lower()
         alias = alias.lower()
@@ -200,7 +280,7 @@ class Server(commands.Cog):
         help="Remove an alias from a command",
         usage="(command) (alias) | ban deport",
     )
-    @commands.has_permissions(administrator=True)
+    @commands.has_permissions(manage_guild=True)
     async def remove_alias_command(self, ctx: commands.Context, alias: str):
         alias = alias.lower()
 
@@ -227,10 +307,10 @@ class Server(commands.Cog):
         )
 
     @alias_group.command(
-        name="view",
-        help="View all aliases in the server",
+        name="list",
+        help="List all aliases in the server",
     )
-    @commands.has_permissions(administrator=True)
+    @commands.has_permissions(manage_guild=True)
     async def view_alias_command(self, ctx: commands.Context):
         guild_data: dict = await self.dbf.get_guild_data(guild_id=ctx.guild.id)
         guild_config: dict = guild_data.setdefault("Configuration", {})
@@ -429,7 +509,7 @@ class Server(commands.Cog):
         invoke_without_command=True,
     )
     @commands.guild_only()
-    @commands.has_permissions(administrator=True)
+    @commands.has_permissions(manage_guild=True)
     async def configure_group(self, ctx: commands.Context):
         if not ctx.invoked_subcommand:
             await ctx.send(
@@ -445,7 +525,7 @@ class Server(commands.Cog):
         aliases=["clear", "c"],
     )
     @commands.guild_only()
-    @commands.has_permissions(administrator=True)
+    @commands.has_permissions(manage_guild=True)
     async def configure_purge_group(self, ctx: commands.Context):
         if not ctx.invoked_subcommand:
             await ctx.send(
@@ -461,29 +541,69 @@ class Server(commands.Cog):
         aliases=["disallow"],
     )
     @commands.guild_only()
-    @commands.has_permissions(administrator=True)
-    async def configure_purge_block_command(
-        self, ctx: commands.Context, channel: discord.TextChannel
+    @commands.has_permissions(manage_guild=True)
+    async def configure_block_purge_command(
+        self, ctx: commands.Context, *, channels: str
     ):
+        raw_parts = [p.strip() for p in channels.replace(",", " ").split()]
+        channel_ids = []
+        invalid = []
+
+        for part in raw_parts:
+            try:
+                ch = await commands.TextChannelConverter().convert(ctx, part)
+                channel_ids.append(ch.id)
+            except Exception:
+                invalid.append(part)
+
+        if not channel_ids and invalid:
+            return await ctx.send(
+                embed=Embeds.warning(
+                    author=ctx.author,
+                    description=f"Invalid channels: {self.bot.bp} "
+                    + f"{self.bot.bp} ".join(invalid),
+                )
+            )
+
         guild_data = await self.dbf.get_guild_data(guild_id=ctx.guild.id)
         guild_config = guild_data.setdefault("Configuration", {})
         guild_purge_config = guild_config.setdefault("Purge", {})
-        purge_config_block = guild_purge_config.setdefault("Blocked_Channels", [])
+        blocked_channels = guild_purge_config.setdefault("Blocked_Channels", [])
 
-        action = True
+        added = []
+        removed = []
 
-        if channel.id in purge_config_block:
-            purge_config_block.remove(channel.id)
-            action = False
-        else:
-            purge_config_block.append(channel.id)
+        for cid in channel_ids:
+            if cid in blocked_channels:
+                blocked_channels.remove(cid)
+                removed.append(cid)
+            else:
+                blocked_channels.append(cid)
+                added.append(cid)
 
         await self.dbf.set_guild_data(guild_id=ctx.guild.id, data=guild_data)
 
+        lines = []
+
+        if added:
+            added_mentions = f", ".join(
+                ctx.guild.get_channel(cid).mention for cid in added
+            )
+            lines.append(f"**Added**: {self.bot.bp} {added_mentions}")
+
+        if removed:
+            removed_mentions = f", ".join(
+                ctx.guild.get_channel(cid).mention for cid in removed
+            )
+            lines.append(f"**Removed**: {self.bot.bp} {removed_mentions}")
+
+        if invalid:
+            invalid_list = f", ".join(invalid)
+            lines.append(f"**Invalid**: {self.bot.bp} {invalid_list}")
+
         await ctx.send(
             embed=Embeds.checkmark(
-                author=ctx.author,
-                description=f"{channel.mention} has been **{'added to' if action == True else 'removed from'}** the purge **block list**.",
+                author=ctx.author, description=f"{self.bot.bp} ".join(lines)
             )
         )
 
@@ -494,7 +614,7 @@ class Server(commands.Cog):
         aliases=["pinned"],
     )
     @commands.guild_only()
-    @commands.has_permissions(administrator=True)
+    @commands.has_permissions(manage_guild=True)
     async def configure_purge_deletepinned_command(
         self, ctx: commands.Context, type: str
     ):
@@ -542,6 +662,8 @@ class Server(commands.Cog):
         aliases=["rr"],
         invoke_without_command=True,
     )
+    @commands.guild_only()
+    @commands.has_permissions(manage_guild=True)
     async def reactionrole_group(self, ctx: commands.Context):
         if not ctx.invoked_subcommand:
             await ctx.send(
@@ -556,6 +678,8 @@ class Server(commands.Cog):
         usage="[message_id] (emoji) (roles)  | 1448024306876416051 👍 @Verified",
         aliases=["new", "create"],
     )
+    @commands.guild_only()
+    @commands.has_permissions(manage_guild=True)
     async def add_reactionrole_commands(
         self,
         ctx: commands.Context,
@@ -643,6 +767,8 @@ class Server(commands.Cog):
         usage="[message_id] (emoji) (roles)  | 1448024306876416051 👍 @Verified",
         aliases=["delete", "rem", "del"],
     )
+    @commands.guild_only()
+    @commands.has_permissions(manage_guild=True)
     async def remove_reactionrole_commands(
         self,
         ctx: commands.Context,
@@ -812,6 +938,8 @@ class Server(commands.Cog):
         usage="(trigger) (response) | wardic, The king of all",
         aliases=["create"],
     )
+    @commands.guild_only()
+    @commands.has_permissions(manage_messages=True)
     async def add_autoresponder_command(self, ctx: commands.Context, *, args: str):
         joint = args.split(", ", 1)
 
@@ -861,6 +989,8 @@ class Server(commands.Cog):
         usage="(trigger) | wardic",
         aliases=["delete"],
     )
+    @commands.guild_only()
+    @commands.has_permissions(manage_messages=True)
     async def remove_autoresponder_command(
         self, ctx: commands.Context, *, trigger: str
     ):
@@ -894,6 +1024,8 @@ class Server(commands.Cog):
         usage="(mode) | True",
         aliases=["include"],
     )
+    @commands.guild_only()
+    @commands.has_permissions(manage_guild=True)
     async def strict_autoresponder_command(
         self,
         ctx: commands.Context,
@@ -903,7 +1035,6 @@ class Server(commands.Cog):
         guild_config = guild_data.setdefault("Configuration", {})
         autoresponder_config = guild_config.setdefault("Auto_Responders", {})
         autoresponder_settings = autoresponder_config.setdefault("Settings", {})
-        strict_config = autoresponder_settings.setdefault("Strict", False)
 
         action = False
         if mode.lower() in ("on", "yes", "y", "true", "1"):
@@ -918,6 +1049,303 @@ class Server(commands.Cog):
                 description=f"Turned **{'on' if action == True else 'off'} strict mode** for auto-responder.",
             )
         )
+
+    @commands.group(
+        name="filter",
+        help="A group of message filter related commands",
+        usage="(subcommand) (arguments) | add Wardic Is Bad",
+        invoke_without_command=True,
+    )
+    @commands.guild_only()
+    @commands.has_permissions(manage_guild=True)
+    async def filter_group(self, ctx: commands.Context):
+        if not ctx.invoked_subcommand:
+            await ctx.send(
+                embed=Embeds.command(
+                    command=ctx.command, author=ctx.author, prefix=ctx.prefix
+                )
+            )
+
+    @filter_group.command(
+        name="add",
+        help="Add word(s) to the message filter",
+        usage="(words) | Wardic Is Bad",
+        aliases=["new", "cr"],
+    )
+    @commands.guild_only()
+    @commands.has_permissions(manage_guild=True)
+    @commands.bot_has_permissions(manage_guild=True)
+    async def add_filter_command(self, ctx: commands.Context, *, keywords: str):
+        words = self.parse_keyword_list(text=keywords)
+
+        if not words:
+            return await ctx.send(
+                embed=Embeds.warning(
+                    author=ctx.author,
+                    description="You must provide at least **one keyword**.",
+                )
+            )
+
+        if any(len(w) < 2 for w in words):
+            return await ctx.send(
+                embed=Embeds.warning(
+                    author=ctx.author,
+                    description="Each keyword must be **at least 2 characters**.",
+                )
+            )
+
+        try:
+            rule = await self.get_or_create_automod_rule(ctx.guild)
+
+            if not rule:
+                rule = await self.create_filter_rule(ctx.guild, words, ctx.author)
+                return await ctx.send(
+                    embed=Embeds.checkmark(
+                        author=ctx.author,
+                        description=f"Created filter and added **{len(words)}** {'keyword' if len(words) == 1 else "keywords"}.",
+                    )
+                )
+
+            current = list(rule.trigger.keyword_filter)
+            added = []
+
+            for w in words:
+                if not any(existing.lower() == w.lower() for existing in current):
+                    current.append(w)
+                    added.append(w)
+
+            if not added:
+                return await ctx.send(
+                    embed=Embeds.warning(
+                        author=ctx.author,
+                        description="Those keywords are already in the filter.",
+                    )
+                )
+
+            await rule.edit(
+                trigger=discord.AutoModTrigger(
+                    type=discord.AutoModRuleTriggerType.keyword, keyword_filter=current
+                ),
+                reason=f"Added by {ctx.author.name}",
+            )
+
+            await ctx.send(
+                embed=Embeds.checkmark(
+                    author=ctx.author,
+                    description=f"Added: {', '.join(f'`{w}`' for w in added)} to the filter",
+                )
+            )
+
+        except discord.Forbidden:
+            return await ctx.send(
+                embed=Embeds.warning(
+                    author=ctx.author,
+                    description=f"I'm **missing** permissions to manage **Auto-Mod**.",
+                )
+            )
+        except discord.HTTPException:
+            return await ctx.send(
+                embed=Embeds.issue(
+                    author=ctx.author,
+                    description=f"I **couldn't manange Auto-Mod**. Try again later.",
+                )
+            )
+
+    @filter_group.command(
+        name="remove",
+        help="Remove a word from the message filter",
+        usage="(words) | Wardic Is Bad",
+        aliases=["delete", "rm"],
+    )
+    @commands.guild_only()
+    @commands.has_permissions(manage_guild=True)
+    @commands.bot_has_permissions(manage_guild=True)
+    async def remove_filter_command(self, ctx: commands.Context, *, keywords: str):
+        words = self.parse_keyword_list(text=keywords)
+
+        if not words:
+            return await ctx.send(
+                embed=Embeds.warning(
+                    author=ctx.author,
+                    description="You must provide at least **one keyword**.",
+                )
+            )
+
+        try:
+            rule = await self.get_or_create_automod_rule(ctx.guild)
+
+            if not rule:
+                return await ctx.send(
+                    embed=Embeds.warning(
+                        author=ctx.author, description="No filter rule exists."
+                    )
+                )
+
+            current = list(rule.trigger.keyword_filter)
+            removed = []
+
+            for w in words:
+                for existing in current:
+                    if existing.lower() == w.lower():
+                        removed.append(existing)
+                        current.remove(existing)
+                        break
+
+            if not removed:
+                return await ctx.send(
+                    embed=Embeds.warning(
+                        author=ctx.author,
+                        description="None of those keywords were found.",
+                    )
+                )
+
+            if not current:
+                await rule.delete(reason=f"Removed final word by {ctx.author.name}")
+                return await ctx.send(
+                    embed=Embeds.checkmark(
+                        author=ctx.author,
+                        description=f"Removed `{', '.join(removed)}` and deleted the rule.",
+                    )
+                )
+
+            await rule.edit(
+                trigger=discord.AutoModTrigger(
+                    type=discord.AutoModRuleTriggerType.keyword,
+                    keyword_filter=current,
+                ),
+                reason=f"Removed by {ctx.author.name}",
+            )
+
+            await ctx.send(
+                embed=Embeds.checkmark(
+                    author=ctx.author,
+                    description=f"Removed: {', '.join(f'`{w}`' for w in removed)}",
+                )
+            )
+
+        except discord.Forbidden:
+            return await ctx.send(
+                embed=Embeds.warning(
+                    author=ctx.author,
+                    description="I lack permissions to manage automod rules.",
+                )
+            )
+
+    @filter_group.command(name="list", aliases=["show", "view"])
+    @commands.guild_only()
+    @commands.has_permissions(manage_guild=True)
+    @commands.bot_has_permissions(manage_guild=True)
+    async def list_filter_command(self, ctx: commands.Context):
+        try:
+            rule = await self.get_or_create_automod_rule(ctx.guild)
+
+            if not rule or not rule.trigger.keyword_filter:
+                return await ctx.send(
+                    embed=Embeds.warning(
+                        author=ctx.author,
+                        description="There are **no keywords** in the filter.",
+                    )
+                )
+
+            keywords = [
+                f"`{i+1}` {kw}" for i, kw in enumerate(rule.trigger.keyword_filter)
+            ]
+
+            paginator = views.Paginator(
+                bot=self.bot,
+                ctx=ctx,
+                items=keywords,
+                items_per_page=10,
+                embed_title="Filtered Keywords",
+                owner=ctx.author,
+                owner_can_delete=True,
+            )
+
+            await paginator.start()
+
+        except discord.Forbidden:
+            return await ctx.send(
+                embed=Embeds.warning(
+                    author=ctx.author,
+                    description="I lack permissions to manage automod rules.",
+                )
+            )
+
+    @filter_group.command(name="on")
+    @commands.guild_only()
+    @commands.has_permissions(manage_guild=True)
+    @commands.bot_has_permissions(manage_guild=True)
+    async def on_filter_command(self, ctx: commands.Context):
+        try:
+            rule = await self.get_or_create_automod_rule(ctx.guild)
+
+            if not rule:
+                return await ctx.send(
+                    embed=Embeds.warning(
+                        author=ctx.author,
+                        description="No filter rule exists. Add keywords first.",
+                    )
+                )
+
+            if rule.enabled:
+                return await ctx.send(
+                    embed=Embeds.warning(
+                        author=ctx.author, description="The filter is **already on**."
+                    )
+                )
+
+            await rule.edit(enabled=True, reason=f"Issued by {ctx.author.name}")
+            await ctx.send(
+                embed=Embeds.checkmark(
+                    author=ctx.author, description="The filter is now **on**."
+                )
+            )
+
+        except discord.Forbidden:
+            return await ctx.send(
+                embed=Embeds.warning(
+                    author=ctx.author,
+                    description="I lack permissions to manage automod rules.",
+                )
+            )
+
+    @filter_group.command(name="off")
+    @commands.guild_only()
+    @commands.has_permissions(manage_guild=True)
+    @commands.bot_has_permissions(manage_guild=True)
+    async def off_filter_command(self, ctx: commands.Context):
+        try:
+            rule = await self.get_or_create_automod_rule(ctx.guild)
+
+            if not rule:
+                return await ctx.send(
+                    embed=Embeds.warning(
+                        author=ctx.author,
+                        description="No filter rule exists. Add keywords first.",
+                    )
+                )
+
+            if not rule.enabled:
+                return await ctx.send(
+                    embed=Embeds.warning(
+                        author=ctx.author, description="The filter is **already off**."
+                    )
+                )
+
+            await rule.edit(enabled=False, reason=f"Issued by {ctx.author.name}")
+            await ctx.send(
+                embed=Embeds.checkmark(
+                    author=ctx.author, description="The filter is now **off**."
+                )
+            )
+
+        except discord.Forbidden:
+            return await ctx.send(
+                embed=Embeds.warning(
+                    author=ctx.author,
+                    description="I lack permissions to manage automod rules.",
+                )
+            )
 
 
 async def setup(bot):

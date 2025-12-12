@@ -92,13 +92,18 @@ class Embeds:
     ):
         name = command.qualified_name
         embed = discord.Embed(title=f"Command: {name}", colour=Colours.main())
-        raw_usage = (
-            command.usage.split(" | ")
-            if "|" in command.usage or command.usage
-            else ["(none)", ""]
-        )
-        syntax = raw_usage[0] or "(none)"
-        example = raw_usage[1] or ""
+        raw_usage = None
+        if command.usage:
+            raw_usage = (
+                command.usage.split(" | ") if "|" in command.usage else ["(none)", ""]
+            )
+
+        if raw_usage:
+            syntax = raw_usage[0] or "(none)"
+            example = raw_usage[1] or ""
+        else:
+            syntax = "(none)"
+            example = ""
 
         embed.description = f"""{command.help}\n```Syntax: {prefix}{name} {syntax}\nExample: {prefix}{name} {example}```"""
 

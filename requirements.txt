@@ -4,3 +4,6 @@ rapidfuzz
 python-dotenv
 aiohttp
 pillow
+psutil
+pyfiglet
+colorama

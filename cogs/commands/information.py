@@ -154,7 +154,10 @@ class Information(commands.Cog):
         await ctx.send(embed=embed, view=view)
 
     @commands.command(
-        name="whois", help="View a users profile", aliases=["userid", "uid", "wi", "ui"]
+        name="whois",
+        help="View a users profile",
+        usage="(user) | wardic",
+        aliases=["userid", "uid", "wi", "ui"],
     )
     async def whois_command(self, ctx: commands.Context, user: discord.User = None):
         user = user or ctx.author
@@ -242,9 +245,7 @@ class Information(commands.Cog):
             )
         )
 
-        embed.colour = colour = await helpers.image_primary_colour(
-            user.display_avatar.url
-        )
+        embed.colour = await helpers.image_primary_colour(user.display_avatar.url)
 
         await ctx.send(embed=embed, view=view)
 

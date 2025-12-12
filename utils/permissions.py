@@ -166,13 +166,18 @@ async def is_antiraid_administrator(
 
     return False
 
-async def merge_overwrites(self, channel: discord.TextChannel) -> dict:
+
+async def merge_overwrites(
+    self, channel: Union[discord.TextChannel, discord.VoiceChannel], updates: dict
+) -> dict:
     overwrites = {}
-        
+
     for target, overwrite in channel.overwrites.items():
         new_overwrite = discord.PermissionOverwrite(**overwrite._values)
-        new_overwrite.send_messages = False
-            
+
+        for permission, value in updates.items():
+            setattr(new_overwrite, permission, value)
+
         overwrites[target] = new_overwrite
 
     return overwrites

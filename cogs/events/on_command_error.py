@@ -15,7 +15,14 @@ class OnCommandError(commands.Cog):
 
     @commands.Cog.listener()
     async def on_command_error(self, ctx, error):
-        if isinstance(error, commands.MissingPermissions):
+        if isinstance(error, commands.NoPrivateMessage):
+            return await ctx.send(
+                embed=Embeds.warning(
+                    author=ctx.author,
+                    description=f"**{ctx.command.name}** can only be used in a server.",
+                )
+            )
+        elif isinstance(error, commands.MissingPermissions):
             permissions = ", ".join(error.missing_permissions)
             await ctx.send(
                 embed=Embeds.warning(
@@ -28,7 +35,7 @@ class OnCommandError(commands.Cog):
         elif isinstance(error, exceptions.MaxDurationExceeded):
             return
         elif isinstance(error, commands.CheckFailure):
-            return
+            return log.error(error)
         elif isinstance(error, commands.CommandOnCooldown):
             cooldown = error.retry_after
             formatted = f"{cooldown:.1f}s"

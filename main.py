@@ -1,27 +1,43 @@
-import discord, os, logging, asyncpg, asyncio, json, random, ssl
+import discord, os, logging, asyncpg, asyncio, json, random, config
+from logging.handlers import RotatingFileHandler
 from discord.ext import commands
 from datetime import timedelta
 from dotenv import load_dotenv
 from urllib.parse import urlparse
 from utils.cache import Cache
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="[{asctime}] [{levelname}] {name}: {message}",
-    datefmt="%H:%M:%S",
-    style="{",
+formatter = logging.Formatter(
+    "[{asctime}] [{levelname}] {name}: {message}", style="{", datefmt="%H:%M:%S"
+)
+file_handler = RotatingFileHandler(
+    "bot.log", mode="a", maxBytes=5_000_000, backupCount=5, encoding="utf-8"
 )
 
-log = logging.getLogger("Bot")
-cog_log = logging.getLogger("Cogs")
-db_log = logging.getLogger("Database")
+file_handler.setFormatter(formatter)
+console_handler = logging.StreamHandler()
+console_handler.setFormatter(formatter)
+
+
+def create_logger(name: str) -> logging.Logger:
+    logger = logging.getLogger(name)
+    logger.setLevel(logging.INFO)
+    if not logger.handlers:
+        logger.addHandler(file_handler)
+        logger.addHandler(console_handler)
+    logger.propagate = False
+    return logger
+
+
+log = create_logger("Bot")
+cog_log = create_logger("Cogs")
+db_log = create_logger("Database")
+
+logging.getLogger("discord").setLevel(logging.WARNING)
 
 load_dotenv()
 _token = os.getenv("DISCORD_TOKEN")
 _database_url = os.getenv("DATABASE_URL")
 _fallback_prefix = os.getenv("FALLBACK_PREFIX")
-
-logging.getLogger("discord").setLevel(logging.WARNING)
 
 
 class Database:
@@ -162,12 +178,19 @@ class BotCache:
             namespace="roles",
             ttl=int(timedelta(hours=2).total_seconds()),
         )
+        self.rbx_cookies = Cache(
+            Cache.MEMORY,
+            namespace="rbx_cookies",
+            ttl=int(timedelta(minutes=5).total_seconds()),
+        )
 
     async def clear_all(self):
         await self.guilds.clear()
         await self.members.clear()
         await self.users.clear()
         await self.config.clear()
+        await self.roles.clear()
+        await self.rbx_cookies.clear()
 
     async def cleanup_all_expired(self) -> int:
         total = 0
@@ -175,6 +198,8 @@ class BotCache:
         total += await self.members.cleanup_expired()
         total += await self.users.cleanup_expired()
         total += await self.config.cleanup_expired()
+        total += await self.roles.cleanup_expired()
+        total += await self.rbx_cookies.cleanup_expired()
         return total
 
 
@@ -207,10 +232,16 @@ class DatabaseFunctions:
             data JSONB DEFAULT '{}'
         );
 
+        CREATE TABLE IF NOT EXISTS rbx_cookies (
+            active BOOL PRIMARY KEY DEFAULT TRUE,
+            data JSONB DEFAULT '{}'
+        );
+
         ALTER TABLE guilds DISABLE ROW LEVEL SECURITY;
         ALTER TABLE members DISABLE ROW LEVEL SECURITY;
         ALTER TABLE users DISABLE ROW LEVEL SECURITY;
         ALTER TABLE configuration DISABLE ROW LEVEL SECURITY;
+        ALTER TABLE rbx_cookies DISABLE ROW LEVEL SECURITY;
         """
         await self.db.execute(q, bot_update=True)
 
@@ -247,6 +278,12 @@ class DatabaseFunctions:
                     PERFORM pg_notify('cache_invalidate', json_build_object(
                         'table', 'configuration',
                         'id', 'config'
+                    )::text);
+
+                ELSIF TG_TABLE_NAME = 'rbx_cookies' THEN
+                    PERFORM pg_notify('cache_invalidate', json_build_object(
+                        'table', 'rbx_cookies',
+                        'id', 'rbx_cookies'
                     )::text);
                 END IF;
 
@@ -429,6 +466,37 @@ class DatabaseFunctions:
         )
         await self.cache.config.set("config", data)
 
+    # Roblox
+    async def get_roblox_cookies(self) -> dict:
+        cached = await self.cache.config.get("rbx_cookies")
+        if cached is not None:
+            return cached
+
+        row = await self.db.fetchrow("SELECT data FROM rbx_cookies WHERE active=TRUE")
+        if row:
+            data = (
+                row["data"]
+                if isinstance(row["data"], dict)
+                else json.loads(row["data"])
+            )
+        else:
+            data = {"Cookies": []}
+            await self.db.execute(
+                "INSERT INTO rbx_cookies (active, data) VALUES (TRUE, $1) ON CONFLICT (active) DO NOTHING",
+                json.dumps(data),
+                bot_update=True,
+            )
+        await self.cache.config.set("rbx_cookies", data)
+        return data
+
+    async def set_roblox_cookies(self, data: dict):
+        await self.db.execute(
+            "INSERT INTO rbx_cookies (active, data) VALUES (TRUE, $1) ON CONFLICT (active) DO UPDATE SET data=$1",
+            json.dumps(data),
+            bot_update=True,
+        )
+        await self.cache.config.set("rbx_cookies", data)
+
     # Delete / clear helpers
     async def delete_guild_data(self, guild_id: int):
         await self.db.execute(
@@ -456,6 +524,12 @@ class DatabaseFunctions:
     async def delete_user_data(self, user_id: int):
         await self.db.execute("DELETE FROM users WHERE id=$1", user_id, bot_update=True)
         await self.cache.users.delete(str(user_id))
+
+    async def delete_roblox_cookie_data(self):
+        await self.db.execute(
+            "DELETE FROM rbx_cookies WHERE active=TRUE", bot_update=True
+        )
+        await self.cache.rbx_cookies.clear()
 
     async def clear_cache(self):
         await self.cache.clear_all()
@@ -608,6 +682,35 @@ class Bot(commands.Bot):
 
 
 async def main():
+    import platform, sys, psutil
+
+    def system_banner():
+        os_info = f"{platform.system()} {platform.release()}"
+        python_ver = sys.version.split()[0]
+
+        cpu_info = platform.processor()
+        if not cpu_info:
+            cpu_info = platform.uname().processor or "Unknown CPU"
+
+        ram_gb = round(psutil.virtual_memory().total / (1024**3), 2)
+
+        lines = [
+            f"Running: {config.NAME} {config.VERSION} discord.py",
+            f"OS:      {os_info}",
+            f"CPU:     {cpu_info}",
+            f"RAM:     {ram_gb} GB",
+            f"Python:  v{python_ver}",
+        ]
+
+        width = max(len(line) for line in lines) + 4
+
+        print("┌" + "─" * (width - 2) + "┐")
+        for line in lines:
+            print(f"│ {line.ljust(width - 4)} │")
+        print("└" + "─" * (width - 2) + "┘")
+
+    system_banner()
+
     bot = Bot()
     log.info("Starting bot...")
     await bot.start(_token)

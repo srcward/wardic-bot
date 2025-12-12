@@ -14,33 +14,13 @@ from main import Bot
 log = logging.getLogger("Main")
 
 
-async def role_cache_entry(self, guild: discord.Guild, member: discord.Member):
-    try:
-        role_ids = [role.id for role in member.roles if role != guild.default_role]
-
-        if role_ids:
-            cache_key = f"{guild.id}:{member.id}"
-            await self.bot.cache.roles.set(
-                cache_key,
-                role_ids,
-                ttl=int(timedelta(hours=2).total_seconds()),
-            )
-    except Exception as e:
-        log.error(f"Error caching roles: {e}")
-
-
-async def role_delete_entry(self, guild: discord.Guild, member: discord.Member):
-    cache_key = f"{guild.id}:{member.id}"
-
-    if await self.bot.cache.roles.get(cache_key):
-        await self.bot.cache.roles.delete(cache_key)
-
-
 class Mod(commands.Cog):
     def __init__(self, bot: Bot):
         self.bot = bot
         self.db = bot.db
         self.dbf = bot.dbf
+        self.role_cache_entry = helpers.role_cache_entry
+        self.role_delete_entry = helpers.role_delete_entry
 
     @commands.command(
         name="ban",
@@ -109,7 +89,7 @@ class Mod(commands.Cog):
                 )
 
             if isinstance(user, discord.Member):
-                await role_cache_entry(self, guild=ctx.guild, member=user)
+                await self.role_cache_entry(self, guild=ctx.guild, member=user)
 
             await ctx.guild.ban(
                 user=user,
@@ -197,7 +177,7 @@ class Mod(commands.Cog):
                         return
 
             if isinstance(user, discord.Member):
-                await role_cache_entry(self, guild=ctx.guild, member=user)
+                await self.role_cache_entry(self, guild=ctx.guild, member=user)
 
             if not await helpers.promise_ban_entry(guild=ctx.guild, user=user):
                 await ctx.guild.ban(
@@ -295,7 +275,7 @@ class Mod(commands.Cog):
                 )
 
             if isinstance(user, discord.Member):
-                await role_cache_entry(self, guild=ctx.guild, member=user)
+                await self.role_cache_entry(self, guild=ctx.guild, member=user)
 
             await ctx.guild.ban(
                 user=user,
@@ -443,7 +423,7 @@ class Mod(commands.Cog):
                     view=view,
                 )
 
-            await role_cache_entry(self, guild=ctx.guild, member=member)
+            await self.role_cache_entry(self, guild=ctx.guild, member=member)
 
             await ctx.guild.kick(
                 user=member, reason=f"Issued by {ctx.author.name} / {reason}"
@@ -890,7 +870,7 @@ class Mod(commands.Cog):
     @commands.has_permissions(manage_roles=True)
     @commands.bot_has_permissions(manage_roles=True)
     @commands.cooldown(rate=1, per=5, type=commands.BucketType.member)
-    async def role_command(
+    async def role_group(
         self, ctx: commands.Context, member: discord.Member, *args: str
     ):
         if ctx.invoked_subcommand:
@@ -959,16 +939,16 @@ class Mod(commands.Cog):
             )
 
         try:
-            if add:
-                await member.add_roles(
-                    *add, reason=f"Issued by {ctx.author}", atomic=False
-                )
             if remove:
                 await member.remove_roles(
                     *remove, reason=f"Issued by {ctx.author}", atomic=False
                 )
+            if add:
+                await member.add_roles(
+                    *add, reason=f"Issued by {ctx.author}", atomic=False
+                )
 
-            await role_cache_entry(self, guild=ctx.guild, member=member)
+            await self.role_cache_entry(self, guild=ctx.guild, member=member)
         except discord.Forbidden:
             return await ctx.send(
                 embed=Embeds.warning(
@@ -987,17 +967,17 @@ class Mod(commands.Cog):
         msg = []
 
         if add:
-            msg.append("**Added**: " + ", ".join(r.mention for r in add))
+            msg.append("**Added** " + ", ".join(r.mention for r in add))
         if remove:
-            msg.append("**Removed**: " + ", ".join(r.mention for r in remove))
+            msg.append("**Removed** " + ", ".join(r.mention for r in remove))
         if skipped:
-            msg.append("**Skipped**: " + ", ".join(skipped))
+            msg.append("**Skipped** " + ", ".join(skipped))
 
         await ctx.send(
             embed=Embeds.checkmark(author=ctx.author, description=" ".join(msg))
         )
 
-    @role_command.command(
+    @role_group.command(
         name="create",
         help="Create a role",
         usage='[name] [color] [hoist] | "Administrator" True',
@@ -1108,7 +1088,7 @@ class Mod(commands.Cog):
             embed=Embeds.checkmark(author=ctx.author, description=description)
         )
 
-    @role_command.command(
+    @role_group.command(
         name="delete",
         help="Delete a role",
         usage="(role) | Administrator",
@@ -1164,7 +1144,7 @@ class Mod(commands.Cog):
             )
         )
 
-    @role_command.command(
+    @role_group.command(
         name="rename",
         help="Rename a role",
         usage="(role) (name) | Administrator Admin",
@@ -1210,7 +1190,7 @@ class Mod(commands.Cog):
             )
         )
 
-    @role_command.command(
+    @role_group.command(
         name="stick",
         help="Stick a role to a member",
         usage="(member) (roles) | wardic Pic Perms",
@@ -1360,34 +1340,36 @@ class Mod(commands.Cog):
     async def restore_roles_command(
         self, ctx: commands.Context, member: discord.Member
     ):
-        cache_key = f"{ctx.guild.id}:{member.id}"
+        guild = ctx.guild
+        author = ctx.author
+        cache_key = f"{guild.id}:{member.id}"
+
         cached_role_ids = await self.bot.cache.roles.get(cache_key)
 
         if not cached_role_ids:
             return await ctx.send(
                 embed=Embeds.warning(
-                    author=ctx.author,
+                    author=author,
                     description=f"**{member.name}** has no cached roles to restore.",
                 )
             )
 
-        current_roles = set(r.id for r in member.roles if r != ctx.guild.default_role)
+        current_roles = set(r.id for r in member.roles if r != guild.default_role)
 
         roles_to_add = []
         missing_roles = []
         cant_manage = []
         already_has = []
 
-        bot_top = ctx.guild.me.top_role
-        author_top = ctx.author.top_role
+        bot_top = guild.me.top_role
+        author_top = author.top_role
 
         for role_id in cached_role_ids:
             if role_id in current_roles:
                 already_has.append(role_id)
                 continue
 
-            role = ctx.guild.get_role(role_id)
-
+            role = guild.get_role(role_id)
             if not role:
                 missing_roles.append(str(role_id))
                 continue
@@ -1396,10 +1378,7 @@ class Mod(commands.Cog):
                 cant_manage.append(role.name)
                 continue
 
-            if (
-                role.position >= author_top.position
-                and ctx.guild.owner_id != ctx.author.id
-            ):
+            if role.position >= author_top.position and guild.owner_id != author.id:
                 cant_manage.append(role.name)
                 continue
 
@@ -1413,7 +1392,10 @@ class Mod(commands.Cog):
             msg_parts = []
 
             if already_has:
-                msg_parts.append(f"**{member.name}** already has all restorable roles.")
+                msg_parts.append(
+                    f"**{member.name}** already has all restorable roles "
+                    f"({len(already_has)} role(s))."
+                )
 
             if missing_roles:
                 msg_parts.append(
@@ -1421,13 +1403,18 @@ class Mod(commands.Cog):
                 )
 
             if cant_manage:
-                msg_parts.append(f"**Can't manage**: {', '.join(cant_manage[:5])}")
-                if len(cant_manage) > 5:
-                    msg_parts.append(f"...and {len(cant_manage) - 5} more")
+                msg_parts.append(
+                    f"**Can't manage**: {', '.join(cant_manage[:5])}"
+                    + (
+                        f"... and {len(cant_manage)-5} more"
+                        if len(cant_manage) > 5
+                        else ""
+                    )
+                )
 
             return await ctx.send(
                 embed=Embeds.warning(
-                    author=ctx.author,
+                    author=author,
                     description=(
                         "\n".join(msg_parts) if msg_parts else "No roles to restore."
                     ),
@@ -1436,49 +1423,50 @@ class Mod(commands.Cog):
 
         try:
             await member.add_roles(
-                *roles_to_add, reason=f"Role restore by {ctx.author}", atomic=False
+                *roles_to_add,
+                reason=f"Role restore by {author}",
+                atomic=False,
             )
-            await role_delete_entry(self, guild=ctx.guild, member=member)
+            await self.role_delete_entry(self, guild=guild, member=member)
         except discord.Forbidden:
             return await ctx.send(
                 embed=Embeds.warning(
-                    author=ctx.author,
+                    author=author,
                     description=f"I'm **missing permissions** to manage roles for **{member}**.",
                 )
             )
-        except discord.HTTPException as e:
+        except discord.HTTPException:
             return await ctx.send(
                 embed=Embeds.issue(
-                    author=ctx.author,
-                    description=f"I **couldn't restore roles for {member}**. Error: {str(e)}",
+                    author=author,
+                    description=f"I **couldn't restore roles for {member}**. Try again later.",
                 )
             )
 
-        msg_parts = []
-        msg_parts.append(
-            f"**Restored {len(roles_to_add)} role(s)** to **{member.name}**"
-        )
-        msg_parts.append(
-            "**Roles**: " + ", ".join(r.mention for r in roles_to_add[:10])
-        )
+        parts = []
 
-        if len(roles_to_add) > 10:
-            msg_parts.append(f"...and {len(roles_to_add) - 10} more")
+        restored = [f"`{r.name}`" for r in roles_to_add]
 
-        if already_has:
-            pass
+        if restored:
+            if len(restored) > 10:
+                restored_display = ", ".join(restored[:10]) + "..."
+            else:
+                restored_display = ", ".join(restored)
 
-        if missing_roles:
-            pass
+            parts.append(f"Restored {restored_display}")
 
         if cant_manage:
-            msg_parts.append(f"*Couldn't restore: {', '.join(cant_manage[:3])}*")
-            if len(cant_manage) > 3:
-                msg_parts.append(f"*...and {len(cant_manage) - 3} more*")
+            cant = [f"`{name}`" for name in cant_manage]
+            if len(cant) > 10:
+                cant_display = ", ".join(cant[:10]) + "..."
+            else:
+                cant_display = ", ".join(cant)
 
-        await ctx.send(
-            embed=Embeds.checkmark(author=ctx.author, description="\n".join(msg_parts))
-        )
+            parts.append(f"Couldn't restore {cant_display}")
+
+        final_msg = " ".join(parts)
+
+        await ctx.send(embed=Embeds.checkmark(author=author, description=final_msg))
 
     @commands.command(
         name="lock",
@@ -1581,6 +1569,103 @@ class Mod(commands.Cog):
                 description=f"Successfully unlocked {channel.mention}.",
                 emoji=":lock:",
                 colour=0xFFAC33,
+            )
+        )
+
+    @commands.command(
+        name="stripstaff",
+        help="Remove all staff roles from a member",
+        usage="(member) | wardic",
+        aliases=["strip"],
+    )
+    @commands.guild_only()
+    @commands.has_permissions(administrator=True)
+    @commands.bot_has_permissions(manage_roles=True)
+    async def stripstaff(self, ctx: commands.Context, member: discord.Member):
+        await permissions.higher_permissions(
+            should_be_higher=ctx.author, should_be_lower=member, action="strip"
+        )
+
+        bot_top = ctx.guild.me.top_role
+        author_top = ctx.author.top_role
+        default_role = ctx.guild.default_role
+
+        staff_perms = {
+            "ban_members",
+            "kick_members",
+            "moderate_members",
+            "manage_messages",
+            "manage_roles",
+            "manage_channels",
+            "manage_guild",
+            "view_audit_log",
+        }
+
+        staff_roles = []
+        failed_roles = []
+
+        for role in member.roles:
+            if role == default_role:
+                continue
+
+            if any(getattr(role.permissions, p, False) for p in staff_perms):
+
+                if role.position >= bot_top.position:
+                    failed_roles.append(role.name)
+                    continue
+
+                if (
+                    role.position >= author_top.position
+                    and ctx.guild.owner_id != ctx.author.id
+                ):
+                    failed_roles.append(role.name)
+                    continue
+
+                if role.managed:
+                    failed_roles.append(role.name)
+                    continue
+
+                staff_roles.append(role)
+
+        if not staff_roles:
+            return await ctx.send(
+                embed=Embeds.warning(
+                    author=ctx.author,
+                    description=f"**{member.name}** doesn't have any **staff roles**.",
+                )
+            )
+
+        try:
+            await member.remove_roles(
+                *staff_roles, reason=f"Issued by {ctx.author}", atomic=False
+            )
+        except discord.Forbidden:
+            return await ctx.send(
+                embed=Embeds.warning(
+                    author=ctx.author,
+                    description=f"I'm **missing permissions** to strip {member.name}.",
+                )
+            )
+        except discord.HTTPException:
+            return await ctx.send(
+                embed=Embeds.issue(
+                    author=ctx.author,
+                    description=f"I **couldn't strip {member.name}**. Try again later.",
+                )
+            )
+
+        stripped_list = ", ".join(r.name for r in staff_roles)
+
+        description = f"**Stripped:** {stripped_list}"
+
+        if failed_roles:
+            bullet = self.bot.bp
+            failed_lines = "\n".join(f"{bullet} {r}" for r in failed_roles)
+            description += f"\n\n**Failed:**\n{failed_lines}"
+
+        await ctx.send(
+            embed=Embeds.checkmark(
+                author=ctx.author, description=description + f" from **{member.name}**"
             )
         )
 

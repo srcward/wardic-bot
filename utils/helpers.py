@@ -1,10 +1,13 @@
-import discord, re, aiohttp, time
+import discord, re, aiohttp, time, logging
 from discord.ext import commands
 from io import BytesIO
 from PIL import Image
+from datetime import timedelta
 from typing import Optional, Union, Dict, Any, List
 from collections import Counter
 from utils import exceptions
+
+log = logging.getLogger("Helpers")
 
 
 async def promise_member(
@@ -59,6 +62,27 @@ async def promise_ban_entry(
     except (discord.Forbidden, discord.NotFound, discord.HTTPException):
         ban_entry = None
     return ban_entry
+
+
+async def promise_channel(
+    guild: discord.Guild, channel_id: int
+) -> Optional[discord.Guild]:
+    channel = guild.get_channel(channel_id)
+    if not channel:
+        try:
+            channel = await guild.fetch_channel(channel_id)
+        except (discord.Forbidden, discord.HTTPException):
+            channel = None
+    return channel
+
+
+async def promise_category(guild: discord.Guild, category_id: int):
+    category = None
+    for cat in guild.categories:
+        if cat.id == category_id:
+            category = cat
+            break
+    return category
 
 
 def parse_duration(value, *, default_unit="s", max_time=None) -> int:
@@ -176,7 +200,6 @@ def parse_flags(
                     else:
                         value = value_str
 
-                    # Handle multiple values
                     if flag_config.get("multiple", False):
                         result[flag_name].append(value)
                     else:
@@ -262,3 +285,25 @@ def build_duration(timestamp: int | float, max_length: int = None) -> str:
         parts = parts[:max_length]
 
     return " ".join(parts)
+
+
+async def role_cache_entry(self, guild: discord.Guild, member: discord.Member):
+    try:
+        role_ids = [role.id for role in member.roles if role != guild.default_role]
+
+        if role_ids:
+            cache_key = f"{guild.id}:{member.id}"
+            await self.bot.cache.roles.set(
+                cache_key,
+                role_ids,
+                ttl=int(timedelta(hours=2).total_seconds()),
+            )
+    except Exception as e:
+        log.error(f"Error caching roles: {e}")
+
+
+async def role_delete_entry(self, guild: discord.Guild, member: discord.Member):
+    cache_key = f"{guild.id}:{member.id}"
+
+    if await self.bot.cache.roles.get(cache_key):
+        await self.bot.cache.roles.delete(cache_key)
