@@ -34,11 +34,6 @@ class GuildEvents(commands.Cog):
 
                     cleaned_count += 1
 
-            if cleaned_count > 0:
-                log.info(
-                    f"Cleaned deleted role {role.id} from {cleaned_count} cached member(s)"
-                )
-
             try:
                 pass
             except Exception as e:

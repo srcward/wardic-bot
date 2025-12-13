@@ -21,11 +21,9 @@ class RotatingStatus(commands.Cog):
         config: dict = await self.dbf.get_configuration()
         status_data: dict = config.setdefault("Statuses", {})
 
-        statuses: list = status_data.setdefault(
-            "List", ["i listen to esdeekid and fakemink"]
-        )
+        statuses: list = status_data.setdefault("List", ["If I were a bird"])
 
-        settings: dict = status_data.get("Configuration", {})
+        settings: dict = status_data.get("Settings", {})
         randomized: bool = settings.get("Randomized", False)
         loop_enabled: bool = settings.get("LoopingEnabled", True)
 

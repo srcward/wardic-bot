@@ -5,7 +5,7 @@ from typing import Optional, Union
 from rapidfuzz import process, fuzz
 
 from utils import views, checks
-from utils.messages import Embeds
+from utils.messages import Embeds, Emojis, Colours
 
 from main import Bot
 
@@ -37,7 +37,7 @@ class BotCog(commands.Cog):
     @commands.group(
         name="ownercmds",
         help="A group of owner related commands",
-        usage="(subcommand) (arguments) | status add 🔗 discord.gg/wardic",
+        usage="(subcommand) (arguments) | status add If I were a bird",
         aliases=["ownc", "own"],
         invoke_without_command=True,
     )
@@ -53,14 +53,14 @@ class BotCog(commands.Cog):
     @ownercmds_group.group(
         name="status",
         help="A group of status related commands",
-        usage="[subcommand] [arguments] | add 🔗 discord.gg/wardic",
+        usage="[subcommand] [arguments] | add If I were a bird",
         invoke_without_command=True,
     )
     @checks.is_owner()
     async def status_command(self, ctx: commands.Context):
         config = await self.dbf.get_configuration()
         status_data = config.setdefault("Statuses", {})
-        statuses = status_data.setdefault("List", ["🔗 discord.gg/wardic"])
+        statuses = status_data.setdefault("List", ["If I were a bird"])
 
         items = [f"`{index+1}` {s}" for index, s in enumerate(statuses)]
 
@@ -78,13 +78,13 @@ class BotCog(commands.Cog):
     @status_command.command(
         name="add",
         help="Add a status to the auto-rotating status list",
-        usage="(status) | 🔗 discord.gg/wardic",
+        usage="(status) | If I were a bird",
     )
     @checks.is_owner()
     async def add_status_command(self, ctx: commands.Context, *, status: str):
         config = await self.dbf.get_configuration()
         status_data = config.setdefault("Statuses", {})
-        statuses = status_data.setdefault("List", ["🔗 discord.gg/wardic"])
+        statuses = status_data.setdefault("List", ["If I were a bird"])
 
         if status in statuses:
             return await ctx.send(
@@ -104,9 +104,38 @@ class BotCog(commands.Cog):
         )
 
     @status_command.command(
+        name="remove",
+        help="Remove a status from the auto-rotating status list",
+        usage="(status) | If I were a bird",
+    )
+    @checks.is_owner()
+    async def remove_status_command(self, ctx: commands.Context, *, status: str):
+        config = await self.dbf.get_configuration()
+        status_data = config.setdefault("Statuses", {})
+        statuses = status_data.setdefault("List", ["If I were a bird"])
+
+        if status not in statuses:
+            return await ctx.send(
+                embed=Embeds.warning(
+                    author=ctx.author,
+                    description=f"That status **doesn't exist**. Use `{ctx.prefix}status` to view all statuses.",
+                )
+            )
+
+        statuses.remove(status)
+        await self.dbf.set_configuration(data=config)
+
+        await ctx.send(
+            embed=Embeds.checkmark(
+                author=ctx.author,
+                description=f"Removed `{status}` from the rotating statuses.",
+            )
+        )
+
+    @status_command.command(
         name="set",
         help="Set the bots status",
-        usage="(status) | 🔗 discord.gg/wardic",
+        usage="(status) | If I were a bird",
     )
     @checks.is_owner()
     async def set_status_command(self, ctx: commands.Context, *, status: str):
@@ -128,35 +157,6 @@ class BotCog(commands.Cog):
         await self.dbf.set_configuration(data=config)
 
     @status_command.command(
-        name="remove",
-        help="Remove a status from the auto-rotating status list",
-        usage="(status) | 🔗 discord.gg/wardic",
-    )
-    @checks.is_owner()
-    async def remove_status_command(self, ctx: commands.Context, *, status: str):
-        config = await self.dbf.get_configuration()
-        status_data = config.setdefault("Statuses", {})
-        statuses = status_data.setdefault("List", ["🔗 discord.gg/wardic"])
-
-        if status not in statuses:
-            return await ctx.send(
-                embed=Embeds.warning(
-                    author=ctx.author,
-                    description=f"That status **doesn't exist**. Use `{ctx.prefix}status` to view all statuses.",
-                )
-            )
-
-        statuses.remove(status)
-        await self.dbf.set_configuration(data=config)
-
-        await ctx.send(
-            embed=Embeds.checkmark(
-                author=ctx.author,
-                description=f"Removed `{status}` from the rotating statuses.",
-            )
-        )
-
-    @status_command.command(
         name="randomize",
         help="Toggle the looping status list to randomly pick a status",
         usage="(toggle) | true",
@@ -166,7 +166,7 @@ class BotCog(commands.Cog):
     async def randomize_status_command(self, ctx: commands.Context, toggle: str):
         config = await self.dbf.get_configuration()
         status_data = config.setdefault("Statuses", {})
-        settings = status_data.setdefault("Configuration", {})
+        settings = status_data.setdefault("Settings", {})
 
         enable = toggle.lower() in ("true", "on", "yes", "y", "t")
         settings["Randomized"] = enable
@@ -189,7 +189,7 @@ class BotCog(commands.Cog):
     async def loop_status_command(self, ctx: commands.Context, toggle: str):
         config = await self.dbf.get_configuration()
         status_data = config.setdefault("Statuses", {})
-        settings = status_data.setdefault("Configuration", {})
+        settings = status_data.setdefault("Settings", {})
 
         enable = toggle.lower() in ("true", "on", "yes", "y", "t")
         settings["LoopingEnabled"] = enable
@@ -374,10 +374,9 @@ class BotCog(commands.Cog):
     @checks.is_owner()
     async def reload(self, ctx: commands.Context):
         msg = await ctx.send(
-            embed=Embeds.embed(
+            embed=Embeds.loading(
                 author=ctx.author,
                 description="Reloading **all commands and events**...",
-                emoji="<a:loading:1444853662592663653>",
             )
         )
 

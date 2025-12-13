@@ -1,8 +1,11 @@
 import discord
 from discord.ext import commands
 
-from utils import helpers
-from utils.messages import Embeds
+from pathlib import Path
+from datetime import timedelta
+
+from utils import helpers, views
+from utils.messages import Embeds, Colours
 
 from main import Bot
 
@@ -248,6 +251,88 @@ class Information(commands.Cog):
         embed.colour = await helpers.image_primary_colour(user.display_avatar.url)
 
         await ctx.send(embed=embed, view=view)
+
+    @commands.command(
+        name="termsofservice", help="View the bots terms of service", aliases=["tos"]
+    )
+    async def termsofservice_command(self, ctx: commands.Context):
+        path = Path("public/terms-of-service.md")
+
+        if not path.exists():
+            return await ctx.send(
+                embed=Embeds.issue(
+                    author=ctx.author,
+                    description=(
+                        "The **terms-of-service file can't be found** "
+                        "(they still exist). Try again later."
+                    ),
+                )
+            )
+
+        raw = path.read_text(encoding="utf-8")
+
+        sections = raw.split("## ")
+        sections = [f"## {s.strip()}" for s in sections if s.strip()]
+
+        items = []
+
+        for i in range(0, len(sections), 3):
+            page = "\n\n".join(sections[i : i + 3])
+            items.append(page)
+
+        paginator = views.Paginator(
+            bot=self.bot,
+            ctx=ctx,
+            items=items,
+            items_per_page=1,
+            embed_title="Wardic's Terms Of Service",
+            embed_colour=Colours.main(),
+            owner=ctx.author,
+            owner_can_delete=True,
+            timeout=timedelta(minutes=10).total_seconds(),
+        )
+
+        await paginator.start()
+
+    @commands.command(name="privacypolicy", help="View the bots privacy policy")
+    async def privacypolicy_command(self, ctx: commands.Context):
+        path = Path("public/privacy-policy.md")
+
+        if not path.exists():
+            return await ctx.send(
+                embed=Embeds.issue(
+                    author=ctx.author,
+                    description=(
+                        "The **privacy-policy file can't be found** "
+                        "(it still exist). Try again later."
+                    ),
+                )
+            )
+
+        raw = path.read_text(encoding="utf-8")
+
+        sections = raw.split("## ")
+        sections = [f"## {s.strip()}" for s in sections if s.strip()]
+
+        items = []
+
+        for i in range(0, len(sections), 3):
+            page = "\n\n".join(sections[i : i + 3])
+            items.append(page)
+
+        paginator = views.Paginator(
+            bot=self.bot,
+            ctx=ctx,
+            items=items,
+            items_per_page=1,
+            embed_title="Wardic's Privacy Policy",
+            embed_colour=Colours.main(),
+            owner=ctx.author,
+            owner_can_delete=True,
+            timeout=timedelta(minutes=10).total_seconds(),
+        )
+
+        await paginator.start()
 
 
 async def setup(bot):

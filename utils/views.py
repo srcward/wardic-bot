@@ -55,11 +55,11 @@ class Paginator(discord.ui.View):
         self,
         bot: commands.Bot,
         ctx: commands.Context,
-        items: List,
+        items: list,
         *,
         items_per_page: int = 10,
-        embed_title: str = None,
-        embed_description: str = None,
+        embed_title: Optional[str] = None,
+        embed_description: Optional[str] = None,
         embed_colour: discord.Colour = None,
         format_item: Optional[Callable[[any], str]] = None,
         timeout: int = 120,
@@ -67,6 +67,7 @@ class Paginator(discord.ui.View):
         owner_can_delete: bool = False,
     ):
         super().__init__(timeout=timeout)
+
         self.bot = bot
         self.ctx = ctx
         self.items = items
@@ -82,9 +83,6 @@ class Paginator(discord.ui.View):
         self.total_pages = max(1, (len(items) + items_per_page - 1) // items_per_page)
         self.message: Optional[discord.Message] = None
 
-        if owner_can_delete:
-            self.add_item(self.DeleteButton(self))
-
         self.update_buttons()
 
     def get_page_items(self):
@@ -95,41 +93,55 @@ class Paginator(discord.ui.View):
     def make_embed(self) -> discord.Embed:
         page_items = self.get_page_items()
         desc = "\n".join(self.format_item(i) for i in page_items)
+
         embed = discord.Embed(
             title=self.embed_title,
             description=desc or self.embed_description,
             color=self.embed_colour,
         )
 
-        if self.owner:
-            embed.set_author(
-                name=(
-                    self.owner.display_name
-                    if isinstance(self.owner, discord.Member)
-                    else self.owner.name
-                ),
-                icon_url=self.owner.display_avatar.url,
-            )
+        embed.set_author(
+            name=(
+                self.owner.display_name
+                if isinstance(self.owner, discord.Member)
+                else self.owner.name
+            ),
+            icon_url=self.owner.display_avatar.url,
+        )
 
-        total_entries = len(self.items)
         embed.set_footer(
-            text=f"Page {self.current_page + 1}/{self.total_pages} ({total_entries} Entries)"
+            text=f"Page {self.current_page + 1}/{self.total_pages} ({len(self.items)} Entries)"
         )
 
         return embed
 
     def update_buttons(self):
         self.clear_items()
-        self.add_item(self.LeftButton(self))
-        self.add_item(self.RightButton(self))
+
+        # No buttons if only one page
+        if self.total_pages <= 1:
+            return
+
+        left = self.LeftButton(self)
+        right = self.RightButton(self)
+
+        left.disabled = self.current_page == 0
+        right.disabled = self.current_page >= self.total_pages - 1
+
+        self.add_item(left)
+        self.add_item(right)
+        self.add_item(self.JumpButton(self))
+
         if self.owner_can_delete:
             self.add_item(self.DeleteButton(self))
 
     async def start(self):
-        """Send the first embed"""
-        self.update_buttons()
-        self.message = await self.ctx.send(embed=self.make_embed(), view=self)
+        self.message = await self.ctx.send(
+            embed=self.make_embed(),
+            view=self if self.total_pages > 1 else None,
+        )
 
+    # Buttons
     class LeftButton(discord.ui.Button):
         def __init__(self, paginator):
             super().__init__(
@@ -144,19 +156,16 @@ class Paginator(discord.ui.View):
                 return await interaction.response.send_message(
                     embed=Embeds.warning(
                         author=interaction.user,
-                        description=f"You **aren't the owner** of this embed.",
+                        description="You **aren't the owner** of this embed.",
                     ),
                     ephemeral=True,
                 )
 
-            if self.paginator.current_page > 0:
-                self.paginator.current_page -= 1
-                self.paginator.update_buttons()
-                await interaction.response.edit_message(
-                    embed=self.paginator.make_embed(), view=self.paginator
-                )
-            else:
-                await interaction.response.defer()
+            self.paginator.current_page -= 1
+            self.paginator.update_buttons()
+            await interaction.response.edit_message(
+                embed=self.paginator.make_embed(), view=self.paginator
+            )
 
     class RightButton(discord.ui.Button):
         def __init__(self, paginator):
@@ -172,19 +181,64 @@ class Paginator(discord.ui.View):
                 return await interaction.response.send_message(
                     embed=Embeds.warning(
                         author=interaction.user,
-                        description=f"You **aren't the owner** of this embed.",
+                        description="You **aren't the owner** of this embed.",
                     ),
                     ephemeral=True,
                 )
 
-            if self.paginator.current_page < self.paginator.total_pages - 1:
-                self.paginator.current_page += 1
-                self.paginator.update_buttons()
-                await interaction.response.edit_message(
-                    embed=self.paginator.make_embed(), view=self.paginator
+            self.paginator.current_page += 1
+            self.paginator.update_buttons()
+            await interaction.response.edit_message(
+                embed=self.paginator.make_embed(), view=self.paginator
+            )
+
+    class JumpButton(discord.ui.Button):
+        def __init__(self, paginator):
+            super().__init__(
+                style=discord.ButtonStyle.secondary,
+                emoji="<:skip_to:1449286077775872021>",
+                row=0,
+            )
+            self.paginator = paginator
+
+        async def callback(self, interaction: discord.Interaction):
+            if interaction.user != self.paginator.owner:
+                return await interaction.response.send_message(
+                    embed=Embeds.warning(
+                        author=interaction.user,
+                        description="You **aren't the owner** of this embed.",
+                    ),
+                    ephemeral=True,
                 )
-            else:
-                await interaction.response.defer()
+
+            await interaction.response.send_modal(
+                self.paginator.JumpModal(self.paginator)
+            )
+
+    class JumpModal(discord.ui.Modal, title="Jump to page"):
+        page = discord.ui.TextInput(
+            label="Page number",
+            placeholder="Enter a page number",
+            required=True,
+        )
+
+        def __init__(self, paginator):
+            super().__init__()
+            self.paginator = paginator
+
+        async def on_submit(self, interaction: discord.Interaction):
+            try:
+                page = int(self.page.value) - 1
+            except ValueError:
+                page = self.paginator.total_pages - 1
+
+            page = max(0, min(page, self.paginator.total_pages - 1))
+            self.paginator.current_page = page
+            self.paginator.update_buttons()
+
+            await interaction.response.edit_message(
+                embed=self.paginator.make_embed(), view=self.paginator
+            )
 
     class DeleteButton(discord.ui.Button):
         def __init__(self, paginator):
@@ -200,13 +254,12 @@ class Paginator(discord.ui.View):
                 return await interaction.response.send_message(
                     embed=Embeds.warning(
                         author=interaction.user,
-                        description=f"You **aren't the owner** of this embed.",
+                        description="You **aren't the owner** of this embed.",
                     ),
                     ephemeral=True,
                 )
 
             try:
                 await self.paginator.message.delete()
-            except Exception:
-                pass
-            self.paginator.stop()
+            finally:
+                self.paginator.stop()

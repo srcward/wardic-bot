@@ -38,7 +38,7 @@ class Emojis:
 
     @staticmethod
     def loading():
-        return "<a:loading:1444853662592663653>"
+        return "<a:new_loading:1449189345813729350>"
 
 
 class Embeds:
@@ -70,6 +70,16 @@ class Embeds:
         return discord.Embed(
             description=f"{Emojis.issue()} {f"{author.mention}: " if author else ""}{description}",
             colour=Colours.red(),
+        )
+
+    @staticmethod
+    def loading(
+        author: Optional[discord.User] = None,
+        description: str = "Enter a description...",
+    ):
+        return discord.Embed(
+            description=f"{Emojis.loading()} {f"{author.mention}: " if author else ""}{description}",
+            colour=Colours.main(),
         )
 
     @staticmethod

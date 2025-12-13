@@ -51,7 +51,7 @@ class Mod(commands.Cog):
                     value=arg, default_unit="s", max_time="7d"
                 )
                 continue
-            except exceptions.ParseDuration_MaxDuration as err:
+            except exceptions.MaxDurationExceeded as err:
                 delete_message_seconds = helpers.parse_duration(
                     value="7d", default_unit="s", max_time="7d"
                 )
@@ -90,6 +90,19 @@ class Mod(commands.Cog):
 
             if isinstance(user, discord.Member):
                 await self.role_cache_entry(self, guild=ctx.guild, member=user)
+
+            guild_data = await self.dbf.get_guild_data(guild_id=ctx.guild.id)
+            guild_config = guild_data.get("Configuration", {})
+            guild_ban_config = guild_config.get("Ban", {})
+            ban_config_block = guild_ban_config.get("Blocked_Users", [])
+
+            if str(user.id) in ban_config_block:
+                return await ctx.send(
+                    embed=Embeds.warning(
+                        author=ctx.author,
+                        description=f"**{user.name}** isn't bannable, they are whitelisted against bans.",
+                    )
+                )
 
             await ctx.guild.ban(
                 user=user,
@@ -179,6 +192,19 @@ class Mod(commands.Cog):
             if isinstance(user, discord.Member):
                 await self.role_cache_entry(self, guild=ctx.guild, member=user)
 
+            guild_data = await self.dbf.get_guild_data(guild_id=ctx.guild.id)
+            guild_config = guild_data.get("Configuration", {})
+            guild_ban_config = guild_config.get("Ban", {})
+            ban_config_block = guild_ban_config.get("Blocked_Users", [])
+
+            if str(user.id) in ban_config_block:
+                return await ctx.send(
+                    embed=Embeds.warning(
+                        author=ctx.author,
+                        description=f"**{user.name}** isn't bannable, they are whitelisted against bans.",
+                    )
+                )
+
             if not await helpers.promise_ban_entry(guild=ctx.guild, user=user):
                 await ctx.guild.ban(
                     user=user,
@@ -186,7 +212,6 @@ class Mod(commands.Cog):
                     delete_message_seconds=delete_message_seconds,
                 )
 
-            guild_data = await self.dbf.get_guild_data(guild_id=ctx.guild.id)
             moderation_data = guild_data.setdefault("Moderation", {})
             hard_banned_users = moderation_data.setdefault("HardBanned_Users", [])
 
@@ -276,6 +301,19 @@ class Mod(commands.Cog):
 
             if isinstance(user, discord.Member):
                 await self.role_cache_entry(self, guild=ctx.guild, member=user)
+
+            guild_data = await self.dbf.get_guild_data(guild_id=ctx.guild.id)
+            guild_config = guild_data.get("Configuration", {})
+            guild_ban_config = guild_config.get("Ban", {})
+            ban_config_block = guild_ban_config.get("Blocked_Users", [])
+
+            if str(user.id) in ban_config_block:
+                return await ctx.send(
+                    embed=Embeds.warning(
+                        author=ctx.author,
+                        description=f"**{user.name}** isn't bannable, they are whitelisted against bans.",
+                    )
+                )
 
             await ctx.guild.ban(
                 user=user,
@@ -587,7 +625,7 @@ class Mod(commands.Cog):
     @commands.guild_only()
     @commands.has_permissions(manage_messages=True)
     @commands.bot_has_permissions(manage_messages=True)
-    @commands.cooldown(rate=1, per=5, type=commands.BucketType.member)
+    @commands.cooldown(rate=1, per=2, type=commands.BucketType.member)
     async def purge_command(self, ctx: commands.Context, *args):
         amount = None
         member = None
@@ -1660,8 +1698,8 @@ class Mod(commands.Cog):
 
         if failed_roles:
             bullet = self.bot.bp
-            failed_lines = "\n".join(f"{bullet} {r}" for r in failed_roles)
-            description += f"\n\n**Failed:**\n{failed_lines}"
+            failed_lines = f", ".join(f"{r}" for r in failed_roles)
+            description += f"{bullet} **Failed:**\n{failed_lines}"
 
         await ctx.send(
             embed=Embeds.checkmark(

@@ -522,6 +522,93 @@ class Voicemaster(commands.Cog):
             )
         )
 
+    @voicemaster_group.command(
+        name="claim", help="Claim a voice channel if the owner left", aliases=["c"]
+    )
+    @commands.guild_only()
+    @commands.cooldown(rate=1, per=5, type=commands.BucketType.member)
+    async def claim_voicemaster_command(self, ctx):
+        if not ctx.author.voice or not ctx.author.voice.channel:
+            return await ctx.send(
+                embed=Embeds.warning(
+                    author=ctx.author, description="You **aren't in** a voice-channel."
+                )
+            )
+
+        channel = ctx.author.voice.channel
+        guild = ctx.guild
+
+        guild_data = await self.dbf.get_guild_data(guild_id=guild.id)
+        voicemaster_data = guild_data.get("VoiceMaster", {})
+        voicemaster_channels = voicemaster_data.get("Channels", {})
+
+        channel_data = voicemaster_channels.get(str(channel.id))
+        if not channel_data:
+            return await ctx.send(
+                embed=Embeds.warning(
+                    author=ctx.author,
+                    description="This **isn't a VoiceMaster channel**.",
+                )
+            )
+
+        current_owner_id = channel_data.get("Owner")
+
+        if current_owner_id:
+            current_owner_id_int = (
+                int(current_owner_id)
+                if isinstance(current_owner_id, str)
+                else current_owner_id
+            )
+
+            if current_owner_id_int == ctx.author.id:
+                return await ctx.send(
+                    embed=Embeds.warning(
+                        author=ctx.author,
+                        description="You **already own** this voice-channel.",
+                    )
+                )
+
+            owner_in_channel = any(
+                member.id == current_owner_id_int for member in channel.members
+            )
+
+            if owner_in_channel:
+                owner = guild.get_member(current_owner_id_int)
+                owner_name = owner.name if owner else "the current owner"
+
+                return await ctx.send(
+                    embed=Embeds.warning(
+                        author=ctx.author,
+                        description=f"You **can't claim** this channel. **{owner_name}** is still in the voice-channel.",
+                    )
+                )
+
+        channel_data["Owner"] = str(ctx.author.id)
+        voicemaster_channels[str(channel.id)] = channel_data
+        voicemaster_data["Channels"] = voicemaster_channels
+        guild_data["VoiceMaster"] = voicemaster_data
+
+        await self.dbf.set_guild_data(guild_id=guild.id, data=guild_data)
+
+        try:
+            overwrites = channel.overwrites
+            overwrites[ctx.author] = discord.PermissionOverwrite(
+                connect=True, manage_channels=True
+            )
+
+            await channel.edit(
+                overwrites=overwrites,
+                reason=f"VoiceMaster: Claimed by {ctx.author.name}",
+            )
+        except discord.Forbidden:
+            pass
+
+        await ctx.send(
+            embed=Embeds.checkmark(
+                author=ctx.author, description="You've **claimed** this voice-channel."
+            )
+        )
+
 
 async def setup(bot):
     await bot.add_cog(Voicemaster(bot))

@@ -178,10 +178,10 @@ class BotCache:
             namespace="roles",
             ttl=int(timedelta(hours=2).total_seconds()),
         )
-        self.rbx_cookies = Cache(
+        self.roblox = Cache(
             Cache.MEMORY,
-            namespace="rbx_cookies",
-            ttl=int(timedelta(minutes=5).total_seconds()),
+            namespace="roblox",
+            ttl=int(timedelta(minutes=2.5).total_seconds()),
         )
 
     async def clear_all(self):
@@ -468,10 +468,6 @@ class DatabaseFunctions:
 
     # Roblox
     async def get_roblox_cookies(self) -> dict:
-        cached = await self.cache.config.get("rbx_cookies")
-        if cached is not None:
-            return cached
-
         row = await self.db.fetchrow("SELECT data FROM rbx_cookies WHERE active=TRUE")
         if row:
             data = (
@@ -486,7 +482,6 @@ class DatabaseFunctions:
                 json.dumps(data),
                 bot_update=True,
             )
-        await self.cache.config.set("rbx_cookies", data)
         return data
 
     async def set_roblox_cookies(self, data: dict):
@@ -495,7 +490,6 @@ class DatabaseFunctions:
             json.dumps(data),
             bot_update=True,
         )
-        await self.cache.config.set("rbx_cookies", data)
 
     # Delete / clear helpers
     async def delete_guild_data(self, guild_id: int):
@@ -695,7 +689,7 @@ async def main():
         ram_gb = round(psutil.virtual_memory().total / (1024**3), 2)
 
         lines = [
-            f"Running: {config.NAME} {config.VERSION} discord.py",
+            f"Running: {config.NAME} v{config.MAJOR}.{config.MINOR}.{config.MICRO} discord.py",
             f"OS:      {os_info}",
             f"CPU:     {cpu_info}",
             f"RAM:     {ram_gb} GB",

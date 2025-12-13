@@ -504,7 +504,7 @@ class Server(commands.Cog):
     @commands.group(
         name="configure",
         help="A group of configuration related commands",
-        usage="(subcommand) (arguments) | purge block #archive",
+        usage="(subcommand) (arguments) | ban block wardic",
         aliases=["settings", "config", "configuration"],
         invoke_without_command=True,
     )
@@ -517,6 +517,95 @@ class Server(commands.Cog):
                     command=ctx.command, author=ctx.author, prefix=ctx.prefix
                 )
             )
+
+    @configure_group.group(
+        name="ban",
+        help="Configure the ban command",
+        usage="(subcommand) (arguments) | block wardic",
+    )
+    @commands.guild_only()
+    @commands.has_permissions(administrator=True)
+    async def configure_ban_group(self, ctx: commands.Context):
+        if not ctx.invoked_subcommand:
+            await ctx.send(
+                embed=Embeds.command(
+                    command=ctx.command, author=ctx.author, prefix=ctx.prefix
+                )
+            )
+
+    @configure_ban_group.command(
+        name="block",
+        help="Block a member from being banned via the wardic commands",
+        usage="(user) | wardic",
+        aliases=["whitelist", "noban"],
+    )
+    @commands.guild_only()
+    @commands.has_permissions(administrator=True)
+    async def configure_block_ban_command(self, ctx: commands.Context, *, users: str):
+        raw_parts = [p.strip() for p in users.replace(",", " ").split()]
+        user_ids = []
+        invalid = []
+
+        for part in raw_parts:
+            try:
+                ch = await commands.UserConverter().convert(ctx, part)
+                user_ids.append(ch.id)
+            except Exception:
+                invalid.append(part)
+
+        if not user_ids and invalid:
+            return await ctx.send(
+                embed=Embeds.warning(
+                    author=ctx.author,
+                    description=f"Invalid users: " + f"{self.bot.bp} ".join(invalid),
+                )
+            )
+
+        guild_data = await self.dbf.get_guild_data(guild_id=ctx.guild.id)
+        guild_config = guild_data.setdefault("Configuration", {})
+        guild_ban_config = guild_config.setdefault("Ban", {})
+        blocked_users = guild_ban_config.setdefault("Blocked_Users", [])
+
+        added = []
+        removed = []
+
+        for uid in user_ids:
+            if str(uid) in blocked_users:
+                blocked_users.remove(str(uid))
+                removed.append(uid)
+            else:
+                blocked_users.append(str(uid))
+                added.append(uid)
+
+        await self.dbf.set_guild_data(guild_id=ctx.guild.id, data=guild_data)
+
+        lines = []
+
+        if added:
+            added_users = []
+            for uid in added:
+                user = await helpers.promise_user(bot=self.bot, user_id=uid)
+                added_users.append(user)
+            added_mentions = f", ".join(u.mention for u in added_users)
+            lines.append(f"**Added**: {added_mentions}")
+
+        if removed:
+            removed_users = []
+            for uid in removed:
+                user = await helpers.promise_user(bot=self.bot, user_id=uid)
+                removed_users.append(user)
+            removed_mentions = f", ".join(u.mention for u in removed_users)
+            lines.append(f"**Removed**: {removed_mentions}")
+
+        if invalid:
+            invalid_list = f", ".join(invalid)
+            lines.append(f"**Invalid**: {invalid_list}")
+
+        await ctx.send(
+            embed=Embeds.checkmark(
+                author=ctx.author, description=f"{self.bot.bp} ".join(lines)
+            )
+        )
 
     @configure_group.group(
         name="purge",
@@ -537,7 +626,7 @@ class Server(commands.Cog):
     @configure_purge_group.command(
         name="block",
         help="Block the purge command from being ran in a channel",
-        usage="(channel) | #archive",
+        usage="(channel) | #archive #archive2",
         aliases=["disallow"],
     )
     @commands.guild_only()
@@ -560,8 +649,7 @@ class Server(commands.Cog):
             return await ctx.send(
                 embed=Embeds.warning(
                     author=ctx.author,
-                    description=f"Invalid channels: {self.bot.bp} "
-                    + f"{self.bot.bp} ".join(invalid),
+                    description=f"Invalid channels: " + f"{self.bot.bp} ".join(invalid),
                 )
             )
 
@@ -575,10 +663,10 @@ class Server(commands.Cog):
 
         for cid in channel_ids:
             if cid in blocked_channels:
-                blocked_channels.remove(cid)
+                blocked_channels.remove(str(cid))
                 removed.append(cid)
             else:
-                blocked_channels.append(cid)
+                blocked_channels.append(str(cid))
                 added.append(cid)
 
         await self.dbf.set_guild_data(guild_id=ctx.guild.id, data=guild_data)
@@ -589,17 +677,17 @@ class Server(commands.Cog):
             added_mentions = f", ".join(
                 ctx.guild.get_channel(cid).mention for cid in added
             )
-            lines.append(f"**Added**: {self.bot.bp} {added_mentions}")
+            lines.append(f"**Added**: {added_mentions}")
 
         if removed:
             removed_mentions = f", ".join(
                 ctx.guild.get_channel(cid).mention for cid in removed
             )
-            lines.append(f"**Removed**: {self.bot.bp} {removed_mentions}")
+            lines.append(f"**Removed**: {removed_mentions}")
 
         if invalid:
             invalid_list = f", ".join(invalid)
-            lines.append(f"**Invalid**: {self.bot.bp} {invalid_list}")
+            lines.append(f"**Invalid**: {invalid_list}")
 
         await ctx.send(
             embed=Embeds.checkmark(
