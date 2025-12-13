@@ -146,7 +146,7 @@ class Paginator(discord.ui.View):
         def __init__(self, paginator):
             super().__init__(
                 style=discord.ButtonStyle.secondary,
-                emoji="<:left:1446331574328230041>",
+                emoji="<:left:1449458849462358037>",
                 row=0,
             )
             self.paginator = paginator
@@ -171,7 +171,7 @@ class Paginator(discord.ui.View):
         def __init__(self, paginator):
             super().__init__(
                 style=discord.ButtonStyle.secondary,
-                emoji="<:right:1446331601737748553>",
+                emoji="<:right:1449458848304992549>",
                 row=0,
             )
             self.paginator = paginator
@@ -196,7 +196,7 @@ class Paginator(discord.ui.View):
         def __init__(self, paginator):
             super().__init__(
                 style=discord.ButtonStyle.secondary,
-                emoji="<:skip_to:1449286077775872021>",
+                emoji="<:filter:1449458847063478455>",
                 row=0,
             )
             self.paginator = paginator
@@ -244,7 +244,7 @@ class Paginator(discord.ui.View):
         def __init__(self, paginator):
             super().__init__(
                 style=discord.ButtonStyle.danger,
-                emoji="<:cancel:1446331629722402910>",
+                emoji="<:cancel:1449459161510187119>",
                 row=0,
             )
             self.paginator = paginator

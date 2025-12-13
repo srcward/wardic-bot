@@ -20,18 +20,20 @@ class Developers(commands.Cog):
         self.badges = {
             "Owner": {
                 "name": "Owner",
-                "emoji": "<a:snorlax:1448192709507420201>",
+                "emoji": "<:wing:1444852907974594671>",
             },
             "Coco's Parent": {
                 "name": "Coco's Parent",
                 "emoji": "<:coco:1448186422879326391>",
             },
-            "Angel": {"name": "Angel", "emoji": "<:wing:1444852907974594671>"},
-            "Music Enjoyer": {
-                "name": "Music Enjoyer",
-                "emoji": "<:true_music_enjoyer:1448193961998024745>",
+            "Contributor": {
+                "name": "Contributor",
+                "emoji": "<:merged:1449455824735834295>",
             },
-            "Cute": {"name": "Cute", "emoji": "<:cute:1448409695235870871>"},
+            "Supporter": {
+                "name": "Supporter",
+                "emoji": "<:crypto:1448192570588004433>",
+            },
         }
 
     @commands.group(
@@ -370,7 +372,7 @@ class Developers(commands.Cog):
             )
         )
 
-    @commands.command(name="reload", help="Reload all commands and events")
+    @ownercmds_group.command(name="reload", help="Reload all commands and events")
     @checks.is_owner()
     async def reload(self, ctx: commands.Context):
         msg = await ctx.send(

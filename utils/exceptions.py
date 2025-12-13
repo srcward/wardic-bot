@@ -19,3 +19,8 @@ class NotAntiNukeAdmin(commands.CheckFailure):
     def __init__(self, executor: discord.User):
         self.executor = executor
         super().__init__(f"{executor.name} isn't an AntiNuke Administrator")
+
+
+class RaiseWithEmbed(commands.CheckFailure):
+    def __init__(self, embed: discord.Embed):
+        self.embed = embed

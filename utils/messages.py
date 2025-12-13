@@ -8,7 +8,7 @@ _fallback_prefix = os.getenv("FALLBACK_PREFIX")
 class Colours:
     @staticmethod
     def main():
-        return discord.Colour(0x71709D)
+        return discord.Colour(0xABA7FF)
 
     @staticmethod
     def green():
@@ -26,7 +26,7 @@ class Colours:
 class Emojis:
     @staticmethod
     def checkmark():
-        return "<:new_approve:1448062471012094063>"
+        return "<:new_approve:1449506962839568484>"
 
     @staticmethod
     def warning():

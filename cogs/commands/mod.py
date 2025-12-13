@@ -22,18 +22,37 @@ class Mod(commands.Cog):
         self.role_cache_entry = helpers.role_cache_entry
         self.role_delete_entry = helpers.role_delete_entry
 
-    @commands.command(
+    async def ban_whitelist(
+        self, ctx: commands.Context, user: discord.User, data: dict
+    ):
+        guild_config = data.get("Configuration", {})
+        guild_ban_config = guild_config.get("Ban", {})
+        ban_config_block = guild_ban_config.get("Blocked_Users", [])
+
+        if str(user.id) in ban_config_block:
+            raise exceptions.RaiseWithEmbed(
+                embed=Embeds.warning(
+                    author=ctx.author,
+                    description=f"**{user.name}** isn't bannable, they are whitelisted against bans.",
+                )
+            )
+
+    @commands.group(
         name="ban",
         help="Ban someone from the server",
         usage="(user) [history] [reason] | wardic 1d Harassing members",
+        invoke_without_command=True,
     )
     @commands.guild_only()
     @commands.has_permissions(ban_members=True)
     @commands.bot_has_permissions(ban_members=True)
     @commands.cooldown(rate=1, per=2, type=commands.BucketType.member)
-    async def ban_command(
+    async def ban_group(
         self, ctx: commands.Context, user: Union[discord.User, discord.Member], *args
     ):
+        if ctx.invoked_subcommand:
+            return
+
         raw_reason = []
         delete_message_seconds = 86400
 
@@ -92,17 +111,10 @@ class Mod(commands.Cog):
                 await self.role_cache_entry(self, guild=ctx.guild, member=user)
 
             guild_data = await self.dbf.get_guild_data(guild_id=ctx.guild.id)
-            guild_config = guild_data.get("Configuration", {})
-            guild_ban_config = guild_config.get("Ban", {})
-            ban_config_block = guild_ban_config.get("Blocked_Users", [])
-
-            if str(user.id) in ban_config_block:
-                return await ctx.send(
-                    embed=Embeds.warning(
-                        author=ctx.author,
-                        description=f"**{user.name}** isn't bannable, they are whitelisted against bans.",
-                    )
-                )
+            try:
+                await self.ban_whitelist(ctx=ctx, user=user, data=guild_data)
+            except exceptions.RaiseWithEmbed as err:
+                return await ctx.send(embed=err.embed)
 
             await ctx.guild.ban(
                 user=user,
@@ -129,6 +141,13 @@ class Mod(commands.Cog):
                 author=ctx.author, description=f"**{user.name}** has been banned."
             )
         )
+
+    @ban_group.command(name="list", help="List all of the bans in the server")
+    @commands.guild_only()
+    @commands.has_permissions(ban_members=True)
+    @commands.bot_has_permissions(ban_members=True)
+    async def list_ban_command(self, ctx: commands.Context):
+        return
 
     @commands.command(
         name="hardban",
@@ -193,17 +212,10 @@ class Mod(commands.Cog):
                 await self.role_cache_entry(self, guild=ctx.guild, member=user)
 
             guild_data = await self.dbf.get_guild_data(guild_id=ctx.guild.id)
-            guild_config = guild_data.get("Configuration", {})
-            guild_ban_config = guild_config.get("Ban", {})
-            ban_config_block = guild_ban_config.get("Blocked_Users", [])
-
-            if str(user.id) in ban_config_block:
-                return await ctx.send(
-                    embed=Embeds.warning(
-                        author=ctx.author,
-                        description=f"**{user.name}** isn't bannable, they are whitelisted against bans.",
-                    )
-                )
+            try:
+                await self.ban_whitelist(ctx=ctx, user=user, data=guild_data)
+            except exceptions.RaiseWithEmbed as err:
+                return await ctx.send(embed=err.embed)
 
             if not await helpers.promise_ban_entry(guild=ctx.guild, user=user):
                 await ctx.guild.ban(
@@ -303,17 +315,10 @@ class Mod(commands.Cog):
                 await self.role_cache_entry(self, guild=ctx.guild, member=user)
 
             guild_data = await self.dbf.get_guild_data(guild_id=ctx.guild.id)
-            guild_config = guild_data.get("Configuration", {})
-            guild_ban_config = guild_config.get("Ban", {})
-            ban_config_block = guild_ban_config.get("Blocked_Users", [])
-
-            if str(user.id) in ban_config_block:
-                return await ctx.send(
-                    embed=Embeds.warning(
-                        author=ctx.author,
-                        description=f"**{user.name}** isn't bannable, they are whitelisted against bans.",
-                    )
-                )
+            try:
+                await self.ban_whitelist(ctx=ctx, user=user, data=guild_data)
+            except exceptions.RaiseWithEmbed as err:
+                return await ctx.send(embed=err.embed)
 
             await ctx.guild.ban(
                 user=user,
