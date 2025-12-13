@@ -523,7 +523,7 @@ class Voicemaster(commands.Cog):
         )
 
     @voicemaster_group.command(
-        name="claim", help="Claim a voice channel if the owner left", aliases=["c"]
+        name="claim", help="Claim a voice channel", aliases=["c"]
     )
     @commands.guild_only()
     @commands.cooldown(rate=1, per=5, type=commands.BucketType.member)
