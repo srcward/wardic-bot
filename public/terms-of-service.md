@@ -1,6 +1,6 @@
 ## Acceptance of Terms
 
-By inviting, accessing, or using this Discord bot ("wardic"), you agree to be bound by these Terms of Service ("Terms"). If you do not agree with these Terms, you must not use the bot ("wardic").
+By inviting, accessing, or using this Discord bot ("wardic"), you agree to be bound by these Terms of Service ("Terms"). If you do not agree with these Terms, you must not use the bot.
 
 Use of the bot is also subject to Discord’s Terms of Service and Community Guidelines.
 
@@ -10,7 +10,7 @@ The bot provides automated features for Discord servers, which may include moder
 
 ## Eligibility
 
-You must comply with Discord’s Terms of Service to use this bot. The bot ("wardic") is intended to be used only within Discord servers and by users permitted under Discord’s rules.
+You must comply with Discord’s Terms of Service to use this bot. The bot is intended to be used only within Discord servers and by users permitted under Discord’s rules.
 
 ## Proper Use
 
