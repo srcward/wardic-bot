@@ -12,7 +12,7 @@ from main import Bot
 cog_log = logging.getLogger("Cogs")
 
 
-class BotCog(commands.Cog):
+class Developers(commands.Cog):
     def __init__(self, bot: Bot):
         self.bot = bot
         self.db = bot.db
@@ -434,4 +434,4 @@ class BotCog(commands.Cog):
 
 
 async def setup(bot):
-    await bot.add_cog(BotCog(bot))
+    await bot.add_cog(Developers(bot))
